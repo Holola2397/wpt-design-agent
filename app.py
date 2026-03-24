@@ -197,3 +197,42 @@ else:
             display_voltage_metric("Rx 병렬 커패시터", res['Clcc_rx'], res['V_parallel_rx_peak'])
         with c4:
             display_voltage_metric("Rx 직렬 커패시터", res['Cp_rx'], res['V_series_rx_peak'])
+
+# ---------------------------------------------------------
+    # 4. 데이터 내보내기 (Export to CSV)
+    st.divider()
+    st.subheader("📥 설계 데이터 다운로드")
+    
+    # 다운로드용 데이터프레임 구성
+    export_data = {
+        "분류": ["시스템", "시스템", "시스템", "시스템", "코일", "코일", "코일", "코일", "코일", "효율", "효율", "효율"],
+        "파라미터 항목": ["입력 전압 (Vin)", "출력 전압 (Vout)", "출력 전력 (Pout)", "주파수 (f0)", "송신 코일 (Ltx)", "수신 코일 (Lrx)", "상호 인덕턴스 (M)", "결합 계수 (k)", "송신 코일 전류 (Itx)", "수신 코일 전류 (Irx)", "예상 전송 효율", "Tx 발열량", "Rx 발열량"],
+        "설계 값": [Vin, Vout, Pout, f0_khz, Ltx*1e6, Lrx*1e6, res['M']*1e6, k, res['Itx'], res['Irx'], res['efficiency'], res['P_loss_tx'], res['P_loss_rx']],
+        "단위": ["V", "V", "W", "kHz", "μH", "μH", "μH", "", "A", "A", "%", "W", "W"]
+    }
+    
+    # 토폴로지에 따른 보상 소자 데이터 추가
+    if topology == "LCC-S (수신부 초경량화)":
+        export_data["분류"].extend(["보상소자", "보상소자", "보상소자", "보상소자", "필터"])
+        export_data["파라미터 항목"].extend(["Tx 직렬 인덕터 (Ls)", "Tx 병렬 커패시터 (Cp)", "Tx 직렬 커패시터 (Cs)", "Rx 직렬 커패시터 (Crx)", "최소 DC 인덕터 (Ldc_min)"])
+        export_data["설계 값"].extend([res['Ls']*1e6, res['Cp']*1e9, res['Cs']*1e9, res['Crx']*1e9, res['Ldc_min']*1e6])
+        export_data["단위"].extend(["μH", "nF", "nF", "nF", "μH"])
+    else:
+        export_data["분류"].extend(["보상소자", "보상소자", "보상소자", "보상소자", "보상소자", "보상소자"])
+        export_data["파라미터 항목"].extend(["Tx 직렬 인덕터 (Llcc_tx)", "Rx 직렬 인덕터 (Llcc_rx)", "Tx 직렬 커패시터 (Clcc_tx)", "Rx 직렬 커패시터 (Clcc_rx)", "Tx 병렬 커패시터 (Cp_tx)", "Rx 병렬 커패시터 (Cp_rx)"])
+        export_data["설계 값"].extend([res['Llcc_tx']*1e6, res['Llcc_rx']*1e6, res['Clcc_tx']*1e9, res['Clcc_rx']*1e9, res['Cp_tx']*1e9, res['Cp_rx']*1e9])
+        export_data["단위"].extend(["μH", "μH", "nF", "nF", "nF", "nF"])
+
+    df_export = pd.DataFrame(export_data)
+    
+    # 엑셀에서 한글이 깨지지 않도록 utf-8-sig 로 인코딩
+    csv_data = df_export.to_csv(index=False).encode('utf-8-sig')
+    
+    st.download_button(
+        label="📊 설계 파라미터 엑셀(CSV) 다운로드",
+        data=csv_data,
+        file_name="wpt_design_parameters.csv",
+        mime="text/csv",
+    )
+    
+    st.caption("※ 다운로드하신 CSV 파일은 엑셀에서 바로 열어보시거나, 한글이나 워드 문서의 표로 복사하여 사용하실 수 있습니다.")
