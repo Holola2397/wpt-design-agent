@@ -98,7 +98,6 @@ def calculate_double_lcc(Vin, Vout, Pout, f0, Ltx, Lrx, k, current_ratio, Rtx, R
 
 # --- [AC Sweep Engine] 주파수 응답 복소 임피던스 시뮬레이션 ---
 def simulate_frequency_response(topology, res_dict, f0, Ltx, Lrx, M, Rtx, Rrx):
-    # 75kHz ~ 95kHz 구간 200개 포인트 샘플링
     f_arr = np.linspace(75e3, 95e3, 200)
     w_arr = 2 * np.pi * f_arr
     
@@ -108,7 +107,6 @@ def simulate_frequency_response(topology, res_dict, f0, Ltx, Lrx, M, Rtx, Rrx):
     if topology == "LCC-S (수신부 초경량화)":
         Ls, Cp, Cs, Crx = res_dict['Ls'], res_dict['Cp'], res_dict['Cs'], res_dict['Crx']
         
-        # Vectorized Complex Impedance Math
         Z_rx = RLeq + Rrx + 1j*w_arr*Lrx + 1/(1j*w_arr*Crx)
         Z_refl = (w_arr * M)**2 / Z_rx
         Z_tx_branch = Rtx + 1j*w_arr*Ltx + 1/(1j*w_arr*Cs) + Z_refl
@@ -123,11 +121,10 @@ def simulate_frequency_response(topology, res_dict, f0, Ltx, Lrx, M, Rtx, Rrx):
         P_out_arr = (np.abs(I_rx)**2) * RLeq
         P_in_arr = np.real(Vin_ac * np.conj(I_in))
         
-    else: # Double LCC
+    else: 
         Llcc_tx, Clcc_tx, Cp_tx = res_dict['Llcc_tx'], res_dict['Clcc_tx'], res_dict['Cp_tx']
         Llcc_rx, Clcc_rx, Cp_rx = res_dict['Llcc_rx'], res_dict['Clcc_rx'], res_dict['Cp_rx']
         
-        # Vectorized Complex Impedance Math
         Z_load_branch = RLeq + 1j*w_arr*Llcc_rx + 1/(1j*w_arr*Clcc_rx)
         Z_p_rx = (1/(1j*w_arr*Cp_rx)) * Z_load_branch / ((1/(1j*w_arr*Cp_rx)) + Z_load_branch)
         Z_rx_total = Rrx + 1j*w_arr*Lrx + Z_p_rx
@@ -151,7 +148,6 @@ def simulate_frequency_response(topology, res_dict, f0, Ltx, Lrx, M, Rtx, Rrx):
 
     eff_arr = np.where(P_in_arr > 0, (P_out_arr / P_in_arr) * 100, 0)
     
-    # DataFrame으로 묶어 반환
     df_freq = pd.DataFrame({
         "Frequency (kHz)": f_arr / 1000,
         "Output Power (W)": P_out_arr,
@@ -202,19 +198,67 @@ else:
 if "error" in res:
     st.error(f"🚨 설계 오류: {res['error']}")
 else:
-    # 1. 효율 분석 대시보드
-    st.subheader("📊 설계 결과 (Center Frequency: 85kHz 기준)")
-    e1, e2, e3 = st.columns(3)
-    e1.metric("송신 코일 전류 (Itx)", f"{res['Itx']:.2f} A", delta="경고: 발열 주의" if res['Itx'] >= 30 else "안정", delta_color="inverse" if res['Itx'] >= 30 else "normal")
-    e2.metric("수신 코일 전류 (Irx)", f"{res['Irx']:.2f} A")
-    e3.metric("AC-AC 전송 효율", f"{res['efficiency']:.1f} %")
-
-    # [NEW] 2. 주파수 응답 시뮬레이션
-    st.divider()
-    st.subheader("📈 AC 주파수 응답 (Frequency Response) 해석")
-    st.markdown("85kHz 중심 주파수 대역(75kHz~95kHz)에서의 전력 전달 및 효율 특성입니다. **결합 계수(k)** 슬라이더를 조절하여 오정렬(Misalignment) 발생 시의 특성 변화(Bifurcation 등)를 관찰해 보세요.")
+    # 1. 효율 분석 대시보드 (복구 완료)
+    st.subheader("📊 AC-AC 전송 효율 및 발열 분석 (85kHz 기준)")
+    e1, e2 = st.columns([1, 2])
     
-    # 시뮬레이션 데이터 생성
+    with e1:
+        eff_color = "normal" if res['efficiency'] >= 90 else "off"
+        st.metric("예상 AC-AC 효율", f"{res['efficiency']:.1f} %", delta="목표치(90%) 달성" if res['efficiency'] >= 90 else "효율 개선 필요", delta_color=eff_color)
+        st.write(f"- 송신 코일(Tx) 발열량: **{res['P_loss_tx']:.1f} W**")
+        st.write(f"- 수신 코일(Rx) 발열량: **{res['P_loss_rx']:.1f} W**")
+        
+    with e2:
+        loss_data = pd.DataFrame({
+            "항목": ["전달된 전력 (AC Output)", "송신 코일 손실", "수신 코일 손실"],
+            "전력 (W)": [res['P_out_ac'], res['P_loss_tx'], res['P_loss_rx']]
+        })
+        st.bar_chart(loss_data.set_index("항목"), height=200)
+
+    st.divider()
+
+    # 2. 마그네틱 코일 상태 (복구 완료)
+    st.subheader("마그네틱 (Coil) 파라미터")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("상호 인덕턴스 (M)", f"{res['M']*1e6:.2f} μH")
+    col2.metric("송신 코일 전류 (Itx)", f"{res['Itx']:.2f} A", delta="경고: 30A 이상 발열 주의" if res['Itx'] >= 30 else "안정", delta_color="inverse" if res['Itx'] >= 30 else "normal")
+    col3.metric("수신 코일 전류 (Irx)", f"{res['Irx']:.2f} A")
+
+    st.divider()
+
+    # 3. 보상 소자 및 전압 스트레스 (복구 완료)
+    st.subheader("보상 소자값 및 내압(Voltage Stress) 리포트")
+    def display_voltage_metric(label, capacitance, voltage):
+        st.metric(label, f"{capacitance*1e9:.2f} nF", f"Peak: {voltage:.0f} V", delta_color="off")
+
+    if topology == "LCC-S (수신부 초경량화)":
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            display_voltage_metric("Tx 병렬 커패시터 (Cp)", res['Cp'], res['V_Cp_peak'])
+        with c2:
+            display_voltage_metric("Tx 직렬 커패시터 (Cs)", res['Cs'], res['V_Cs_peak'])
+        with c3:
+            display_voltage_metric("Rx 직렬 커패시터 (Crx)", res['Crx'], res['V_Crx_peak'])
+            
+        st.info(f"💡 정류기 후단 LC 필터 최소 요구치: **Ldc ≥ {res['Ldc_min']*1e6:.2f} μH**")
+
+    else:
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            display_voltage_metric("Tx 병렬 커패시터", res['Clcc_tx'], res['V_parallel_tx_peak'])
+        with c2:
+            display_voltage_metric("Tx 직렬 커패시터", res['Cp_tx'], res['V_series_tx_peak'])
+        with c3:
+            display_voltage_metric("Rx 병렬 커패시터", res['Clcc_rx'], res['V_parallel_rx_peak'])
+        with c4:
+            display_voltage_metric("Rx 직렬 커패시터", res['Cp_rx'], res['V_series_rx_peak'])
+
+    st.divider()
+
+    # 4. 주파수 응답 시뮬레이션 (새로 추가된 부분을 아래로 배치)
+    st.subheader("📈 AC 주파수 응답 (Frequency Response) 해석")
+    st.markdown("85kHz 중심 주파수 대역(75kHz~95kHz)에서의 전력 전달 및 효율 특성입니다. **결합 계수(k)** 슬라이더를 조절하여 오정렬(Misalignment) 발생 시의 특성 변화를 관찰해 보세요.")
+    
     df_freq = simulate_frequency_response(topology, res, f0, Ltx, Lrx, res['M'], Rtx, Rrx)
     
     tab1, tab2 = st.tabs(["출력 전력 (Output Power)", "전송 효율 (Efficiency)"])
@@ -225,7 +269,7 @@ else:
 
     st.divider()
 
-    # 3. 데이터 다운로드
+    # 5. 데이터 다운로드
     st.subheader("📥 설계 데이터 다운로드")
     
     export_data = {
