@@ -524,13 +524,30 @@ elif st.session_state.step == 4:
     # [Section 4] 주파수 응답 시뮬레이션
     st.markdown('<div class="card-container">', unsafe_allow_html=True)
     st.subheader(t("📈 주파수 응답 시뮬레이션 (Frequency Response)", "📈 Frequency Response Simulation"))
-    y_min, y_max = st.slider(t("그래프 Y축 (효율) 범위", "Y-Axis (Efficiency) Range"), 0, 100, (0, 100))
+    
+    # 1. 데이터를 먼저 생성하여 최대/최소 효율 파악
     df_f = simulate_frequency_response(td['topology'], res, td['f0'], td['Ltx']*1e-6, td['Lrx']*1e-6, res['M'], 0.085, 0.074)
+    
+    # 2. 그래프 형태가 잘 보이도록 초기 Y축 자동 스케일링 (최대 효율 기준 -15% ~ +5%)
+    eff_max = df_f['Efficiency (%)'].max()
+    default_ymax = min(100.0, math.ceil(eff_max + 5.0))
+    default_ymin = max(0.0, math.floor(eff_max - 15.0))
+    
+    # 3. 슬라이더 대신 숫자 입력창(number_input) 배치
+    col_min, col_max = st.columns(2)
+    y_min = col_min.number_input(t("그래프 Y축 최소값 (%)", "Y-Axis Min (%)"), min_value=0.0, max_value=100.0, value=float(default_ymin), step=1.0)
+    y_max = col_max.number_input(t("그래프 Y축 최대값 (%)", "Y-Axis Max (%)"), min_value=0.0, max_value=100.0, value=float(default_ymax), step=1.0)
+    
+    if y_min >= y_max:  # 에러 방지용
+        y_max = min(100.0, y_min + 1.0)
+
+    # 4. 차트 렌더링
     chart = alt.Chart(df_f).mark_line(color='#0A84FF').encode(
         x=alt.X('Frequency (kHz)', scale=alt.Scale(zero=False)),
         y=alt.Y('Efficiency (%)', scale=alt.Scale(domain=[y_min, y_max], clamp=True)),
         tooltip=['Frequency (kHz)', 'Efficiency (%)', 'Output Power (W)']
     ).interactive()
+    
     st.altair_chart(chart, use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
     
