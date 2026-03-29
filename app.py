@@ -306,7 +306,7 @@ elif st.session_state.step == 2:
     else:
         sd = st.session_state.project_data
         if st.session_state.llm_result is None:
-            with st.status(t("🧠 AI 수석 엔지니어 분석 중 (최대 1분 소요될 수 있습니다)...", "🧠 AI Analyzing (may take up to 60s)..."), expanded=True) as status:
+            with st.status(t("🧠 AI 수석 엔지니어 분석 중 (최대 2분 소요될 수 있습니다)...", "🧠 AI Analyzing (may take up to 120s)..."), expanded=True) as status:
                 for attempt in range(3):
                     try:
                         model = genai.GenerativeModel(selected_model)
@@ -331,7 +331,7 @@ elif st.session_state.step == 2:
                             "shielding_guide_en": "Advice on ferrite core and shielding in English."
                         }}
                         """
-                        resp = model.generate_content(prompt, request_options={"timeout": 60.0})
+                        resp = model.generate_content(prompt, request_options={"timeout": 120.0})
                         match = re.search(r'\{.*\}', resp.text, re.DOTALL)
                         if match:
                             st.session_state.llm_result = json.loads(match.group(0))
