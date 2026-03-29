@@ -196,11 +196,12 @@ with st.sidebar:
     st.markdown("### 🔑 Backend Config")
     api_key = st.text_input("Gemini API Key", type="password", help="AI 분석을 위한 구글 API 키를 입력하세요.")
     
+    # [수정됨] 모델 이름 앞에 'models/' 경로를 명시하여 404 에러를 방지합니다.
     selected_model = st.selectbox(
         "LLM 엔진 선택", 
-        ["gemini-1.5-flash", "gemini-1.5-pro"],  # <- gemini-pro는 지우고 이 두 개만 넣습니다.
+        ["models/gemini-1.5-flash", "models/gemini-1.5-pro", "models/gemini-pro"],
         index=0,
-        help="Flash는 응답 속도가 빠르며, Pro는 복잡한 추론에 유리하지만 시간이 더 걸립니다."
+        help="Flash는 속도, Pro는 정밀도에 특화되어 있습니다."
     )
     
     if api_key: 
