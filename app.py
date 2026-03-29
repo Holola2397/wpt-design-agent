@@ -294,10 +294,9 @@ elif st.session_state.step == 2:
                     response = model.generate_content(prompt)
                     raw_text = response.text.replace('```json', '').replace('```', '').strip()
                     st.session_state.llm_result = json.loads(raw_text)
-               except Exception as e:
-                    # [추가됨] 실제 에러 메시지를 화면에 붉은색으로 띄워줍니다.
+                except Exception as e:
+                    # [디버깅] 실제 에러 메시지 출력
                     st.error(f"🚨 구글 API 통신 에러 상세 내용: {e}")
-                    
                     # API 오류 시 Fallback 로직 작동
                     st.warning("⚠️ API 연동 지연으로 자체 휴리스틱 알고리즘을 가동합니다.")
                     topo = "LCC-S (수신부 초경량화)" if saved_data['rx_weight'] <= 500 else "Double LCC (고효율/CC충전)"
@@ -331,7 +330,6 @@ elif st.session_state.step == 2:
                 st.button("시뮬레이션 결과 리포트 생성 ➔", on_click=go_to_step, args=(4,), type="primary", use_container_width=True)
             else:
                 st.button("엔지니어 상세 튜닝 (Manual) ➔", on_click=go_to_step, args=(3,), type="primary", use_container_width=True)
-
 # ==========================================
 # [Phase 3] 파라미터 상세 설계 (Manual Mode)
 # ==========================================
