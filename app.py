@@ -198,7 +198,7 @@ with st.sidebar:
     
     selected_model = st.selectbox(
         "LLM 엔진 선택", 
-        ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"],
+        ["gemini-1.5-flash", "gemini-1.5-pro"],  # <- gemini-pro는 지우고 이 두 개만 넣습니다.
         index=0,
         help="Flash는 응답 속도가 빠르며, Pro는 복잡한 추론에 유리하지만 시간이 더 걸립니다."
     )
