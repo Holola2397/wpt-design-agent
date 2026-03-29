@@ -296,7 +296,7 @@ elif st.session_state.step == 1:
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
-# [Phase 2] AI 추천 (Language Aware)
+# [Phase 2] AI 추천 (Bilingual JSON & Table)
 # ==========================================
 elif st.session_state.step == 2:
     st.header(t("Step 2. AI 엔지니어 종합 설계 제안", "Step 2. AI Engineer Design Proposal"))
@@ -306,8 +306,7 @@ elif st.session_state.step == 2:
     else:
         sd = st.session_state.project_data
         if st.session_state.llm_result is None:
-            with st.status(t("🧠 AI 수석 엔지니어 분석 중 (최대 2분 소요될 수 있습니다)...", "🧠 AI Analyzing (may take up to 60s)..."), expanded=True) as status:
-                lang_target = "Korean" if st.session_state.lang == "KR" else "English"
+            with st.status(t("🧠 AI 수석 엔지니어 분석 중 (최대 1분 소요될 수 있습니다)...", "🧠 AI Analyzing (may take up to 60s)..."), expanded=True) as status:
                 for attempt in range(3):
                     try:
                         model = genai.GenerativeModel(selected_model)
@@ -316,20 +315,23 @@ elif st.session_state.step == 2:
                         App: {sd['app_type']}, Power: {sd['target_power']}W, Vout: {sd['battery_vol_charge']}V, RxWeight: {sd['rx_weight']}g, AirGap: {sd['air_gap']}mm, TxSize: {sd['tx_size']}, RxSize: {sd['rx_size']}.
                         
                         Based on real-world WPT design papers, provide practical recommendations for Ltx, Lrx, and k.
-                        Respond ONLY in a flat JSON format. The JSON values (reasoning, coil_design, shielding_guide) MUST be written in natural {lang_target} language.
+                        Respond ONLY in a flat JSON format. Generate the text fields in BOTH Korean (_kr) and English (_en).
                         {{
                             "topology": "Choose ONE: SS, SP, LCC-S, Double LCC",
-                            "reasoning": "Explain why this topology is best.",
+                            "reasoning_kr": "Explain why this topology is best in Korean.",
+                            "reasoning_en": "Explain why this topology is best in English.",
                             "recommended_vin": <integer>,
                             "recommended_f0": 85,
                             "recommended_ltx": <float representing Tx inductance in uH>,
                             "recommended_lrx": <float representing Rx inductance in uH>,
                             "recommended_k": <float between 0.05 and 0.5>,
-                            "coil_design": "Recommend a coil shape (Circular, Rectangular, DD).",
-                            "shielding_guide": "Advice on ferrite core and shielding."
+                            "coil_design_kr": "Recommend a coil shape (Circular, DD, etc) in Korean.",
+                            "coil_design_en": "Recommend a coil shape in English.",
+                            "shielding_guide_kr": "Advice on ferrite core and shielding in Korean.",
+                            "shielding_guide_en": "Advice on ferrite core and shielding in English."
                         }}
                         """
-                        resp = model.generate_content(prompt, request_options={"timeout": 120.0})
+                        resp = model.generate_content(prompt, request_options={"timeout": 60.0})
                         match = re.search(r'\{.*\}', resp.text, re.DOTALL)
                         if match:
                             st.session_state.llm_result = json.loads(match.group(0))
@@ -345,22 +347,27 @@ elif st.session_state.step == 2:
                             cp = estimate_coil_params(sd['air_gap'], sd['rx_weight'])
                             st.session_state.llm_result = {
                                 "topology": topo, 
-                                "reasoning": t("API 지연으로 내부 알고리즘이 선정했습니다.", "Selected by internal fallback algorithm due to API delay."), 
+                                "reasoning_kr": "API 지연 또는 오류로 내부 알고리즘이 선정했습니다.",
+                                "reasoning_en": "Selected by internal fallback algorithm due to API delay or error.",
                                 "recommended_vin": 100, "recommended_f0": 85, 
                                 "recommended_ltx": cp["Ltx"], "recommended_lrx": cp["Lrx"], "recommended_k": cp["k"],
-                                "coil_design": t("원형(Circular) 코일 추천.", "Circular coil recommended."),
-                                "shielding_guide": t("얇은 페라이트 시트 사용 권장.", "Thin ferrite sheet recommended.")
+                                "coil_design_kr": "원형(Circular) 코일 추천.",
+                                "coil_design_en": "Circular coil recommended.",
+                                "shielding_guide_kr": "얇은 페라이트 시트 사용 권장.",
+                                "shielding_guide_en": "Thin ferrite sheet recommended."
                             }
                 status.update(label=t("✅ 분석 완료", "✅ Analysis Complete"), state="complete")
         
         res = st.session_state.llm_result
         st.markdown('<div class="card-container">', unsafe_allow_html=True)
         st.subheader(t(f"✅ AI 수석 엔지니어 추천: **{res['topology']}** 토폴로지", f"✅ AI Recommendation: **{res['topology']}** Topology"))
-        st.info(f"**💡 {t('추천 사유', 'Reasoning')}:** {res['reasoning']}")
+        
+        # 언어 스위치에 따라 즉각적으로 한글/영어 JSON 키값을 매칭하여 출력
+        st.info(f"**💡 {t('추천 사유', 'Reasoning')}:** {t(res['reasoning_kr'], res['reasoning_en'])}")
         st.divider()
         c1, c2 = st.columns(2)
-        c1.markdown(f"**🧲 {t('코일 형상 가이드', 'Coil Design Guide')}:**<br>{res['coil_design']}", unsafe_allow_html=True)
-        c2.markdown(f"**🛡️ {t('차폐/무게 가이드', 'Shielding Guide')}:**<br>{res['shielding_guide']}", unsafe_allow_html=True)
+        c1.markdown(f"**🧲 {t('코일 형상 가이드', 'Coil Design Guide')}:**<br>{t(res['coil_design_kr'], res['coil_design_en'])}", unsafe_allow_html=True)
+        c2.markdown(f"**🛡️ {t('차폐/무게 가이드', 'Shielding Guide')}:**<br>{t(res['shielding_guide_kr'], res['shielding_guide_en'])}", unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
         st.markdown('<div class="card-container">', unsafe_allow_html=True)
