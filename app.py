@@ -290,7 +290,7 @@ elif st.session_state.step == 2:
                     반드시 아래 JSON 포맷으로만 응답:
                     {{"topology": "LCC-S 또는 Double LCC", "reasoning": "선정 사유 2문장", "recommended_vin": 정수, "recommended_f0": 85, "estimated_m": 실수}}
                     """
-                    model = genai.GenerativeModel('gemini-1.5-flash')
+                    model = genai.GenerativeModel('gemini-pro')
                     response = model.generate_content(prompt)
                     raw_text = response.text.replace('```json', '').replace('```', '').strip()
                     st.session_state.llm_result = json.loads(raw_text)
