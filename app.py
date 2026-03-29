@@ -4,60 +4,53 @@ import pandas as pd
 # --- [System Setup] 페이지 설정 ---
 st.set_page_config(page_title="WPT Design Platform", layout="wide", initial_sidebar_state="collapsed")
 
-# --- [Custom CSS] Apple / Tesla / Flux.ai 스타일 다크모드 강제 적용 ---
+# --- [Custom CSS] 적응형(Adaptive) 스타일 적용 ---
+# 색상을 강제하지 않고 Streamlit의 CSS 변수(var(--text-color) 등)를 활용하여 테마 전환에 완벽히 대응합니다.
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
     
-    /* 전체 폰트 및 배경색 (Solid Black) */
+    /* 전체 폰트 적용 */
     html, body, [class*="css"] {
         font-family: 'Inter', sans-serif;
     }
-    .stApp {
-        background-color: #000000;
-        color: #F5F5F7;
-    }
     
-    /* 카드 UI (Apple Dark Mode 느낌의 Dark Gray) */
+    /* 폼(Form) 카드 UI: 테마에 맞춰 배경색 자동 변경 */
     div[data-testid="stForm"] {
-        background-color: #1C1C1E;
-        border: 1px solid #2C2C2E;
+        background-color: var(--secondary-background-color);
+        border: 1px solid var(--border-color, rgba(128, 128, 128, 0.2));
         border-radius: 16px;
         padding: 24px;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.08);
     }
     
-    /* 입력창 디자인 (Flux.ai 스타일의 미니멀리즘) */
+    /* 입력창 모서리 둥글게 */
     .stTextInput>div>div>input, .stNumberInput>div>div>input, .stSelectbox>div>div>select {
-        background-color: #2C2C2E !important;
-        color: #FFFFFF !important;
-        border: 1px solid #3A3A3C !important;
         border-radius: 8px !important;
     }
     
-    /* 버튼 디자인 (Tesla / Apple Primary Blue) */
+    /* 버튼 디자인 (애플 스타일 Primary Blue 고정) */
     .stButton>button {
-        background-color: #0A84FF;
-        color: white;
-        border-radius: 10px;
+        background-color: #0A84FF !important;
+        color: white !important;
+        border-radius: 10px !important;
         border: none;
         padding: 0.6rem 1.2rem;
         font-weight: 600;
         transition: all 0.2s ease;
     }
     .stButton>button:hover {
-        background-color: #0071E3;
+        background-color: #0071E3 !important;
         transform: scale(1.02);
     }
     
-    /* 프로그레스 바 */
+    /* 프로그레스 바 색상 고정 */
     .stProgress > div > div > div > div {
-        background-color: #0A84FF;
+        background-color: #0A84FF !important;
     }
     
     /* 헤더 텍스트 디자인 */
     h1, h2, h3, h4 {
-        color: #FFFFFF !important;
         font-weight: 600 !important;
         letter-spacing: -0.5px;
     }
@@ -89,9 +82,9 @@ if st.session_state.step > 0:
 # ==========================================
 if st.session_state.step == 0:
     st.markdown("<h1 style='text-align: center; font-size: 3rem;'>Intelligent WPT Platform</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: #86868B; font-size: 1.2rem; margin-bottom: 3rem;'>무선전력전송 모듈의 요구사항 분석부터 파라미터 도출까지, 원스톱 통합 설계 솔루션.</p>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: var(--text-color); opacity: 0.7; font-size: 1.2rem; margin-bottom: 3rem;'>무선전력전송 모듈의 요구사항 분석부터 파라미터 도출까지, 원스톱 통합 설계 솔루션.</p>", unsafe_allow_html=True)
     
-    col1, col2, col3 = st.columns([1, 2, 2]) # 중앙 정렬을 위한 더미 컬럼
+    col1, col2, col3 = st.columns([1, 2, 2])
     
     with col2:
         st.info("💡 **Auto Mode (초심자 / 기획자용)**")
@@ -108,7 +101,7 @@ if st.session_state.step == 0:
 # ==========================================
 elif st.session_state.step == 1:
     st.header("Step 1. 시스템 요구사항 및 제약 조건 입력")
-    st.markdown("<p style='color: #86868B;'>설계하고자 하는 어플리케이션의 물리적, 전기적 한계를 정의합니다.</p>", unsafe_allow_html=True)
+    st.caption("설계하고자 하는 어플리케이션의 물리적, 전기적 한계를 정의합니다.")
     
     with st.form("constraints_form"):
         st.subheader("🔋 어플리케이션 및 배터리 시스템")
@@ -121,7 +114,6 @@ elif st.session_state.step == 1:
         with c3:
             battery_cells = st.number_input("직렬 셀 구성 (S)", min_value=1, value=13, step=1)
         with c4:
-            # 배터리 공칭 전압 자동 계산 시각화
             unit_v = 3.2 if "LFP" in battery_type else 3.7
             battery_vol = unit_v * battery_cells
             st.metric("팩 공칭 전압", f"{battery_vol:.1f} V")
@@ -129,9 +121,8 @@ elif st.session_state.step == 1:
         st.divider()
         
         st.subheader("📐 가용 공간 제약 (Dimensions)")
-        st.markdown("<p style='color: #86868B; font-size: 0.9rem;'>단위: mm (가로 x 세로 x 두께)</p>", unsafe_allow_html=True)
+        st.caption("단위: mm (가로 x 세로 x 두께)")
         
-        # 1. 코일 패드부 입력
         st.markdown("**1. 마그네틱 코일 패드부**")
         pad_c1, pad_c2 = st.columns(2)
         with pad_c1:
@@ -149,7 +140,6 @@ elif st.session_state.step == 1:
 
         st.write("<br>", unsafe_allow_html=True)
 
-        # 2. 전력 회로부 입력
         st.markdown("**2. 전력 회로부 (인버터/정류기 및 보상회로)**")
         pwr_c1, pwr_c2 = st.columns(2)
         with pwr_c1:
@@ -179,7 +169,6 @@ elif st.session_state.step == 1:
         st.write("<br>", unsafe_allow_html=True)
         submitted = st.form_submit_button("입력 완료 및 다음 단계로 ➔")
         if submitted:
-            # 세션에 포맷팅하여 데이터 저장 (나중에 다운로드용)
             st.session_state.project_data = {
                 "app_type": app_type,
                 "battery": f"{battery_cells}S {battery_type} ({battery_vol:.1f}V)",
@@ -202,7 +191,6 @@ elif st.session_state.step == 2:
     st.header("Step 2. AI 기반 토폴로지 및 스펙 추천")
     st.info("⏳ 앞서 입력하신 제약 조건을 바탕으로 최적의 설계를 분석 중입니다... (LLM API 연동 대기 중)")
     
-    # 딕셔너리에 저장된 배터리 전압 가져오기
     saved_data = st.session_state.project_data
     
     st.subheader(f"✅ 추천 토폴로지: **LCC-S (수신부 초경량화 구조)**")
@@ -214,9 +202,9 @@ elif st.session_state.step == 2:
         st.button("⬅️ 제약 조건 다시 입력하기", on_click=go_to_step, args=(1,), use_container_width=True)
     with c2:
         if st.session_state.mode == 'Auto':
-            st.button("시뮬레이션 결과 보기 ➔", on_click=go_to_step, args=(4,), type="primary", use_container_width=True)
+            st.button("시뮬레이션 결과 보기 ➔", on_click=go_to_step, args=(4,), use_container_width=True)
         else:
-            st.button("파라미터 상세 튜닝 (Manual) ➔", on_click=go_to_step, args=(3,), type="primary", use_container_width=True)
+            st.button("파라미터 상세 튜닝 (Manual) ➔", on_click=go_to_step, args=(3,), use_container_width=True)
 
 elif st.session_state.step == 3:
     st.header("Step 3. 코일 및 파라미터 상세 튜닝 (Manual)")
@@ -225,7 +213,7 @@ elif st.session_state.step == 3:
     with c1:
         st.button("⬅️ 이전 단계로", on_click=go_to_step, args=(2,), use_container_width=True)
     with c2:
-        st.button("시뮬레이션 및 최종 리포트 생성 ➔", on_click=go_to_step, args=(4,), type="primary", use_container_width=True)
+        st.button("시뮬레이션 및 최종 리포트 생성 ➔", on_click=go_to_step, args=(4,), use_container_width=True)
 
 elif st.session_state.step == 4:
     st.header("Step 4 & 5. 최종 설계 리포트 및 Export")
