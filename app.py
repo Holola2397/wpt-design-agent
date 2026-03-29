@@ -1,10 +1,70 @@
 import streamlit as st
 import pandas as pd
 
-# --- [System Setup] 페이지 및 상태 초기화 ---
-st.set_page_config(page_title="Intelligent WPT Platform", layout="wide")
+# --- [System Setup] 페이지 설정 ---
+st.set_page_config(page_title="WPT Design Platform", layout="wide", initial_sidebar_state="collapsed")
 
-# 세션 상태(Session State) 초기화: 현재 스텝, 사용자 모드, 입력 데이터 저장용
+# --- [Custom CSS] Apple / Tesla / Flux.ai 스타일 다크모드 강제 적용 ---
+st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    
+    /* 전체 폰트 및 배경색 (Solid Black) */
+    html, body, [class*="css"] {
+        font-family: 'Inter', sans-serif;
+    }
+    .stApp {
+        background-color: #000000;
+        color: #F5F5F7;
+    }
+    
+    /* 카드 UI (Apple Dark Mode 느낌의 Dark Gray) */
+    div[data-testid="stForm"] {
+        background-color: #1C1C1E;
+        border: 1px solid #2C2C2E;
+        border-radius: 16px;
+        padding: 24px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    }
+    
+    /* 입력창 디자인 (Flux.ai 스타일의 미니멀리즘) */
+    .stTextInput>div>div>input, .stNumberInput>div>div>input, .stSelectbox>div>div>select {
+        background-color: #2C2C2E !important;
+        color: #FFFFFF !important;
+        border: 1px solid #3A3A3C !important;
+        border-radius: 8px !important;
+    }
+    
+    /* 버튼 디자인 (Tesla / Apple Primary Blue) */
+    .stButton>button {
+        background-color: #0A84FF;
+        color: white;
+        border-radius: 10px;
+        border: none;
+        padding: 0.6rem 1.2rem;
+        font-weight: 600;
+        transition: all 0.2s ease;
+    }
+    .stButton>button:hover {
+        background-color: #0071E3;
+        transform: scale(1.02);
+    }
+    
+    /* 프로그레스 바 */
+    .stProgress > div > div > div > div {
+        background-color: #0A84FF;
+    }
+    
+    /* 헤더 텍스트 디자인 */
+    h1, h2, h3, h4 {
+        color: #FFFFFF !important;
+        font-weight: 600 !important;
+        letter-spacing: -0.5px;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
+# --- [Session State] 상태 초기화 ---
 if 'step' not in st.session_state:
     st.session_state.step = 0
 if 'mode' not in st.session_state:
@@ -12,7 +72,6 @@ if 'mode' not in st.session_state:
 if 'project_data' not in st.session_state:
     st.session_state.project_data = {}
 
-# 스텝 이동 함수
 def go_to_step(step_num):
     st.session_state.step = step_num
 
@@ -20,29 +79,28 @@ def set_mode_and_next(mode):
     st.session_state.mode = mode
     st.session_state.step = 1
 
-# --- [UI Layout] 프로그레스 바 (진행 상태 표시) ---
+# 상단 진행바
 if st.session_state.step > 0:
     st.progress(st.session_state.step / 5.0, text=f"Step {st.session_state.step} / 5 진행 중...")
-    st.divider()
+    st.write("<br>", unsafe_allow_html=True)
 
 # ==========================================
 # [Phase 0] 진입 화면: 사용자 모드 선택
 # ==========================================
 if st.session_state.step == 0:
-    st.title("⚡ 지능형 WPT 모듈 통합 설계 플랫폼")
-    st.markdown("본 시스템은 무선전력전송 모듈의 요구사항 분석부터 파라미터 도출, 효율 시뮬레이션까지 원스톱으로 제공합니다.")
+    st.markdown("<h1 style='text-align: center; font-size: 3rem;'>Intelligent WPT Platform</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #86868B; font-size: 1.2rem; margin-bottom: 3rem;'>무선전력전송 모듈의 요구사항 분석부터 파라미터 도출까지, 원스톱 통합 설계 솔루션.</p>", unsafe_allow_html=True)
     
-    st.write("### 설계 모드를 선택해 주십시오.")
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns([1, 2, 2]) # 중앙 정렬을 위한 더미 컬럼
     
-    with col1:
-        st.info("💡 **초심자 / 기획자용 (Auto Mode)**")
-        st.write("어플리케이션과 물리적 제약조건만 입력하면, AI가 최적의 토폴로지와 초기 파라미터를 역산하여 추천합니다.")
+    with col2:
+        st.info("💡 **Auto Mode (초심자 / 기획자용)**")
+        st.write("제약조건만 입력하면, AI가 최적의 토폴로지와 초기 파라미터를 추천합니다.")
         st.button("Auto Mode 시작하기", use_container_width=True, on_click=set_mode_and_next, args=('Auto',))
         
-    with col2:
-        st.warning("⚙️ **고급 설계자용 (Manual Mode)**")
-        st.write("AI 추천값을 바탕으로 엔지니어가 직접 코일 스펙과 보상 소자를 미세 조정(Tuning)할 수 있습니다.")
+    with col3:
+        st.warning("⚙️ **Manual Mode (고급 설계자용)**")
+        st.write("AI 추천값을 바탕으로 엔지니어가 직접 코일 스펙과 소자값을 미세 조정합니다.")
         st.button("Manual Mode 시작하기", use_container_width=True, on_click=set_mode_and_next, args=('Manual',))
 
 # ==========================================
@@ -50,104 +108,126 @@ if st.session_state.step == 0:
 # ==========================================
 elif st.session_state.step == 1:
     st.header("Step 1. 시스템 요구사항 및 제약 조건 입력")
-    st.markdown("설계하고자 하는 어플리케이션의 물리적, 전기적 한계를 정의합니다.")
+    st.markdown("<p style='color: #86868B;'>설계하고자 하는 어플리케이션의 물리적, 전기적 한계를 정의합니다.</p>", unsafe_allow_html=True)
     
     with st.form("constraints_form"):
-        c1, c2 = st.columns(2)
+        st.subheader("🔋 어플리케이션 및 배터리 시스템")
+        c1, c2, c3, c4 = st.columns([2, 2, 1, 1])
         with c1:
-            st.subheader("🎯 어플리케이션 정보")
-            app_type = st.selectbox("적용 분야", ["드론 (UAV)", "사족보행 로봇", "AGV/AMR", "전기차 (EV)", "모바일/가전"])
-            battery_type = st.selectbox("배터리 종류", ["Li-ion (리튬이온)", "LiPo (리튬폴리머)", "LFP (리튬인산철)"])
-            battery_vol = st.number_input("배터리 팩 공칭 전압 (V)", value=48.0, step=1.0)
+            app_type = st.selectbox("어플리케이션 분야", ["드론 (UAV)", "사족보행 로봇", "AGV/AMR", "전기차 (EV)", "모바일/가전"])
             target_power = st.number_input("목표 충전 전력 (W)", value=300.0, step=50.0)
-            
         with c2:
-            st.subheader("📦 물리적 제약 조건")
-            rx_weight_limit = st.number_input("수신부(Rx) 최대 허용 무게 (g)", value=400, step=50, help="초경량화가 필요한 경우 타이트하게 설정하세요.")
-            tx_size = st.text_input("송신 패드(Tx) 가용 면적 (예: 200x200mm)", "200x200")
-            rx_size = st.text_input("수신 패드(Rx) 가용 면적 (예: 100x100mm)", "100x100")
-            air_gap = st.number_input("예상 이격 거리 (Air Gap, mm)", value=50, step=5)
+            battery_type = st.selectbox("배터리 셀 화학 조성", ["Li-ion (3.7V)", "LiPo (3.7V)", "LFP (3.2V)"])
+        with c3:
+            battery_cells = st.number_input("직렬 셀 구성 (S)", min_value=1, value=13, step=1)
+        with c4:
+            # 배터리 공칭 전압 자동 계산 시각화
+            unit_v = 3.2 if "LFP" in battery_type else 3.7
+            battery_vol = unit_v * battery_cells
+            st.metric("팩 공칭 전압", f"{battery_vol:.1f} V")
+        
+        st.divider()
+        
+        st.subheader("📐 가용 공간 제약 (Dimensions)")
+        st.markdown("<p style='color: #86868B; font-size: 0.9rem;'>단위: mm (가로 x 세로 x 두께)</p>", unsafe_allow_html=True)
+        
+        # 1. 코일 패드부 입력
+        st.markdown("**1. 마그네틱 코일 패드부**")
+        pad_c1, pad_c2 = st.columns(2)
+        with pad_c1:
+            st.caption("송신 패드 (Tx)")
+            tx_cw, tx_cl, tx_ch = st.columns(3)
+            tx_coil_w = tx_cw.number_input("가로 (W)", key='tcw', value=200, step=10)
+            tx_coil_l = tx_cl.number_input("세로 (L)", key='tcl', value=200, step=10)
+            tx_coil_h = tx_ch.number_input("두께 (H)", key='tch', value=10, step=1)
+        with pad_c2:
+            st.caption("수신 패드 (Rx)")
+            rx_cw, rx_cl, rx_ch = st.columns(3)
+            rx_coil_w = rx_cw.number_input("가로 (W)", key='rcw', value=100, step=10)
+            rx_coil_l = rx_cl.number_input("세로 (L)", key='rcl', value=100, step=10)
+            rx_coil_h = rx_ch.number_input("두께 (H)", key='rch', value=5, step=1)
+
+        st.write("<br>", unsafe_allow_html=True)
+
+        # 2. 전력 회로부 입력
+        st.markdown("**2. 전력 회로부 (인버터/정류기 및 보상회로)**")
+        pwr_c1, pwr_c2 = st.columns(2)
+        with pwr_c1:
+            st.caption("송신 회로보드 (Tx)")
+            tx_pw, tx_pl, tx_ph = st.columns(3)
+            tx_pwr_w = tx_pw.number_input("가로 (W)", key='tpw', value=150, step=10)
+            tx_pwr_l = tx_pl.number_input("세로 (L)", key='tpl', value=100, step=10)
+            tx_pwr_h = tx_ph.number_input("두께 (H)", key='tph', value=30, step=1)
+        with pwr_c2:
+            st.caption("수신 회로보드 (Rx)")
+            rx_pw, rx_pl, rx_ph = st.columns(3)
+            rx_pwr_w = rx_pw.number_input("가로 (W)", key='rpw', value=80, step=10)
+            rx_pwr_l = rx_pl.number_input("세로 (L)", key='rpl', value=60, step=10)
+            rx_pwr_h = rx_ph.number_input("두께 (H)", key='rph', value=15, step=1)
+
+        st.divider()
+
+        st.subheader("⚖️ 무게 및 환경 제약")
+        w_c1, w_c2, w_c3 = st.columns(3)
+        with w_c1:
+            rx_weight_limit = st.number_input("수신부(Rx) 허용 총 무게 (g)", value=400, step=50, help="코일과 회로를 합친 모빌리티 탑재측 최대 무게입니다.")
+        with w_c2:
+            tx_weight_limit = st.number_input("송신부(Tx) 허용 총 무게 (kg)", value=5.0, step=1.0)
+        with w_c3:
+            air_gap = st.number_input("목표 이격 거리 (Air Gap, mm)", value=50, step=5)
             
+        st.write("<br>", unsafe_allow_html=True)
         submitted = st.form_submit_button("입력 완료 및 다음 단계로 ➔")
         if submitted:
-            # 입력 데이터 세션에 저장
+            # 세션에 포맷팅하여 데이터 저장 (나중에 다운로드용)
             st.session_state.project_data = {
-                "app_type": app_type, "battery_type": battery_type, "battery_vol": battery_vol,
-                "target_power": target_power, "rx_weight_limit": rx_weight_limit,
-                "tx_size": tx_size, "rx_size": rx_size, "air_gap": air_gap
+                "app_type": app_type,
+                "battery": f"{battery_cells}S {battery_type} ({battery_vol:.1f}V)",
+                "target_power": target_power,
+                "rx_weight": rx_weight_limit,
+                "air_gap": air_gap,
+                "tx_coil_size": f"{tx_coil_w}x{tx_coil_l}x{tx_coil_h}",
+                "rx_coil_size": f"{rx_coil_w}x{rx_coil_l}x{rx_coil_h}",
+                "tx_pwr_size": f"{tx_pwr_w}x{tx_pwr_l}x{tx_pwr_h}",
+                "rx_pwr_size": f"{rx_pwr_w}x{rx_pwr_l}x{rx_pwr_h}",
             }
             go_to_step(2)
-    
-    st.button("⬅️ 처음으로 돌아가기", on_click=go_to_step, args=(0,))
+            
+    st.button("⬅️ 메인으로 돌아가기", on_click=go_to_step, args=(0,))
 
 # ==========================================
-# [Phase 2] 지능형 추천 및 토폴로지 선정 (LLM 연동 예정 위치)
+# [Phase 2 이후] 임시 처리 (UI 흐름용)
 # ==========================================
 elif st.session_state.step == 2:
     st.header("Step 2. AI 기반 토폴로지 및 스펙 추천")
-    st.info("⏳ 앞서 입력하신 제약 조건을 바탕으로 최적의 설계를 분석 중입니다... (향후 LLM API 연동됨)")
+    st.info("⏳ 앞서 입력하신 제약 조건을 바탕으로 최적의 설계를 분석 중입니다... (LLM API 연동 대기 중)")
     
-    # 임시 목업(Mock-up) 결과 화면
+    # 딕셔너리에 저장된 배터리 전압 가져오기
+    saved_data = st.session_state.project_data
+    
     st.subheader(f"✅ 추천 토폴로지: **LCC-S (수신부 초경량화 구조)**")
-    st.markdown(f"> **추천 사유 (AI 분석):**\n> 입력하신 **{st.session_state.project_data.get('app_type', '')}** 어플리케이션은 수신부 최대 허용 무게가 **{st.session_state.project_data.get('rx_weight_limit', '')}g**으로 매우 제한적입니다. 따라서 수신측 보상 인덕터가 생략되어 극단적인 경량화가 가능한 LCC-S 구조가 적합합니다.")
-    
-    st.divider()
-    st.write("### AI 역산 제안 파라미터")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("권장 입력 전압 (Vin)", "100 V")
-    col2.metric("권장 스위칭 주파수 (f0)", "85 kHz")
-    col3.metric("요구 상호 인덕턴스 (M)", "15.68 μH")
+    st.markdown(f"> **AI 분석 코멘트:**\n> 입력하신 **{saved_data.get('app_type')}** 어플리케이션은 수신부 무게가 **{saved_data.get('rx_weight')}g** 이하로 제한되어 있으며, **{saved_data.get('tx_coil_size')}** 크기의 코일 공간 제약을 갖습니다. 배터리 공칭 전압이 높은 점을 감안할 때 수신부 보상 인덕터 생략이 가능한 LCC-S 구조가 절대적으로 유리합니다.")
     
     st.write("<br>", unsafe_allow_html=True)
     c1, c2 = st.columns(2)
     with c1:
-        st.button("⬅️ 이전 단계로", on_click=go_to_step, args=(1,), use_container_width=True)
+        st.button("⬅️ 제약 조건 다시 입력하기", on_click=go_to_step, args=(1,), use_container_width=True)
     with c2:
         if st.session_state.mode == 'Auto':
-            st.button("바로 시뮬레이션 결과 보기 ➔", on_click=go_to_step, args=(4,), type="primary", use_container_width=True)
+            st.button("시뮬레이션 결과 보기 ➔", on_click=go_to_step, args=(4,), type="primary", use_container_width=True)
         else:
-            st.button("파라미터 상세 튜닝하기 (Manual) ➔", on_click=go_to_step, args=(3,), type="primary", use_container_width=True)
+            st.button("파라미터 상세 튜닝 (Manual) ➔", on_click=go_to_step, args=(3,), type="primary", use_container_width=True)
 
-# ==========================================
-# [Phase 3] 파라미터 상세 설계 (Manual Mode 전용)
-# ==========================================
 elif st.session_state.step == 3:
-    st.header("Step 3. 코일 및 파라미터 상세 튜닝 (Expert)")
-    st.markdown("초기 추천값을 바탕으로 코일 인덕턴스와 결합 계수를 미세 조정합니다.")
-    
-    # 기존 코드에 있던 좌측 슬라이더들을 이곳에 배치할 예정
-    st.warning("🔧 (이곳에 기존의 Ltx, Lrx, k 슬라이더와 실시간 코일 전류 게이지가 배치됩니다.)")
-    
+    st.header("Step 3. 코일 및 파라미터 상세 튜닝 (Manual)")
+    st.warning("🔧 백엔드 계산 모듈 연동 예정")
     c1, c2 = st.columns(2)
     with c1:
         st.button("⬅️ 이전 단계로", on_click=go_to_step, args=(2,), use_container_width=True)
     with c2:
         st.button("시뮬레이션 및 최종 리포트 생성 ➔", on_click=go_to_step, args=(4,), type="primary", use_container_width=True)
 
-# ==========================================
-# [Phase 4 & 5] 최종 시뮬레이션 리포트 및 Export
-# ==========================================
 elif st.session_state.step == 4:
-    st.header("Step 4 & 5. 최종 설계 리포트 및 데이터 내보내기")
-    st.success("🎉 시스템 설계가 완료되었습니다.")
-    
-    # 탭으로 결과 화면 분리
-    tab1, tab2, tab3 = st.tabs(["📊 효율 및 발열 분석", "⚡ 파라미터 및 내압", "📈 주파수 응답 시뮬레이션"])
-    
-    with tab1:
-        st.write("(이곳에 기존의 효율 분석 막대 그래프와 발열량 수치가 렌더링됩니다.)")
-    with tab2:
-        st.write("(이곳에 Ltx, Lrx, Cp, Cs 등의 소자값 및 내압 가이드가 렌더링됩니다.)")
-    with tab3:
-        st.write("(이곳에 75kHz~95kHz 주파수 응답 Altair 동적 그래프가 렌더링됩니다.)")
-        
-    st.divider()
-    
-    st.subheader("📥 프로젝트 데이터 Export")
-    st.markdown("입력하신 제약 조건과 최종 계산된 파라미터를 하나의 CSV 파일로 다운로드합니다.")
-    
-    # 다운로드 버튼 (임시)
-    st.button("📊 사업계획서용 전체 설계 데이터 다운로드 (.csv)", type="primary")
-    
-    st.write("<br>", unsafe_allow_html=True)
+    st.header("Step 4 & 5. 최종 설계 리포트 및 Export")
+    st.success("🎉 설계 및 데이터 다운로드 준비 완료 (기존 계산 모듈 병합 예정)")
     st.button("🔄 새로운 프로젝트 설계하기 (초기화)", on_click=go_to_step, args=(0,))
