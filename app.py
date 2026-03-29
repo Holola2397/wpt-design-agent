@@ -56,15 +56,11 @@ def reset_project():
 # ==========================================
 # [Math Engine] WPT 파라미터 계산 
 # ==========================================
-def estimate_coil_params(M_req, air_gap_mm, rx_weight_g):
+def estimate_coil_params(air_gap_mm, rx_weight_g):
     k_est = max(0.05, 0.4 * math.exp(-air_gap_mm / 60.0))
-    Lrx_max = min(80.0, max(10.0, rx_weight_g / 5.0))
-    Lrx_target = Lrx_max * 0.8
-    Ltx_req = ((M_req * 1e-6) / k_est)**2 / (Lrx_target * 1e-6) if k_est > 0 else 100e-6
-    if Ltx_req > 300e-6:
-        Ltx_req = 300e-6
-        Lrx_target = ((M_req * 1e-6) / k_est)**2 / Ltx_req
-    return {"k": round(k_est, 3), "Lrx": round(Lrx_target, 1), "Ltx": round(Ltx_req * 1e6, 1)}
+    Lrx_target = min(80.0, max(10.0, rx_weight_g / 5.0)) * 0.8
+    Ltx_req = 100.0 if k_est > 0 else 100.0
+    return {"k": round(k_est, 3), "Lrx": round(Lrx_target, 1), "Ltx": round(Ltx_req, 1)}
 
 def calculate_ss(Vin, Vout_cv, Ptarget, f0, Ltx, Lrx, k, Rtx, Rrx):
     try:
@@ -124,7 +120,7 @@ def calculate_lccs(Vin, Vout_cv, Pout, f0, Ltx, Lrx, k, Rtx, Rrx):
         Itx = Vrect_in / (w * M)
         Irx = Iout_ac
         Ls = Vin_ac_rms / (w * Itx)
-        if Ls >= Ltx: return {"error": "Ls > Ltx (보상 불가: 입력전압(Vin)을 낮추거나 Ltx를 키우세요)"}
+        if Ls >= Ltx: return {"error": "Ls > Ltx (보상 불가: 입력전압(Vin)을 낮추거나, Ltx를 더 키우거나, 결합계수(k)를 높이세요)"}
         Cp = 1 / (w**2 * Ls); Cs = 1 / (w**2 * (Ltx - Ls)); Crx = 1 / (w**2 * Lrx)
         P_out_ac = (Irx**2) * RLeq
         P_loss_tx = (Itx**2) * Rtx; P_loss_rx = (Irx**2) * Rrx
@@ -146,7 +142,7 @@ def calculate_double_lcc(Vin, Vout_cv, Pout, f0, Ltx, Lrx, k, current_ratio, Rtx
         L_prod = (M * Vin_ac_rms) / (w * Iout_ac)
         L_rat = current_ratio * (Vrect_in / Vin_ac_rms)
         Llcc_tx = math.sqrt(L_prod / L_rat); Llcc_rx = math.sqrt(L_prod * L_rat)
-        if Llcc_tx >= Ltx or Llcc_rx >= Lrx: return {"error": "Llcc > Ltx/Lrx (설계불가: 코일 인덕턴스 부족)"}
+        if Llcc_tx >= Ltx or Llcc_rx >= Lrx: return {"error": "Llcc > Ltx/Lrx (설계 불가: 송/수신 코일 인덕턴스가 보상 인덕턴스보다 작습니다. Ltx/Lrx를 더 키우세요)"}
         Clcc_tx = 1 / (w**2 * Llcc_tx); Clcc_rx = 1 / (w**2 * Llcc_rx)
         Cp_tx = 1 / (w**2 * (Ltx - Llcc_tx)); Cp_rx = 1 / (w**2 * (Lrx - Llcc_rx))
         Itx = Vin_ac_rms / (w * Llcc_tx); Irx = Vrect_in / (w * Llcc_rx)
@@ -195,8 +191,8 @@ def simulate_frequency_response(topology, res_dict, f0, Ltx, Lrx, M, Rtx, Rrx):
 
 def generate_ai_coaching(res):
     advice = []
-    if res['Itx'] > 15.0: advice.append(f"🔥 **Tx 발열 경고:** 송신 전류({res['Itx']:.1f}A)가 매우 높습니다. 동손(Copper Loss)이 {res['P_loss_tx']:.1f}W 예상되므로 쿨링이 필수적이며, Vin을 높이거나 Ltx를 키워 Itx를 낮추세요.")
-    if res['Irx'] > 10.0: advice.append(f"🔥 **Rx 발열 경고:** 수신 전류({res['Irx']:.1f}A)가 높아 수신부 발열({res['P_loss_rx']:.1f}W 예상)이 우려됩니다. 전압이 낮다면 배터리 직렬(S) 수를 늘리는 것을 고려하세요.")
+    if res['Itx'] > 15.0: advice.append(f"🔥 **Tx 발열 경고:** 송신 전류({res['Itx']:.1f}A)가 매우 높습니다. 동손이 {res['P_loss_tx']:.1f}W 예상되므로 쿨링이 필수적이며, Vin을 높이거나 Ltx를 키워 Itx를 낮추세요.")
+    if res['Irx'] > 10.0: advice.append(f"🔥 **Rx 발열 경고:** 수신 전류({res['Irx']:.1f}A)가 높아 수신부 발열({res['P_loss_rx']:.1f}W 예상)이 우려됩니다.")
     if res['efficiency'] < 85.0: advice.append("📉 **효율 저하:** 예상 효율이 85% 미만입니다. 결합계수(k)를 높이기 위해 코일 크기를 키우거나 이격 거리를 줄여보세요.")
     if not advice: advice.append("✅ **설계 양호:** 코일 전류 및 손실, 효율이 안정적인 범위 내에 있습니다.")
     return "<br>".join(advice)
@@ -230,10 +226,10 @@ if st.session_state.step == 0:
     st.write("<br><br>", unsafe_allow_html=True)
     col1, col2 = st.columns(2)
     with col1:
-        st.info("💡 **Auto Mode**\n\n초심자용. 제약조건 입력 시 AI가 모든 스펙을 추천합니다.")
+        st.info("💡 **Auto Mode**\n\n초심자용. 제약조건 입력 시 AI가 코일 인덕턴스까지 포함하여 최적의 파라미터를 추천합니다.")
         st.button("Auto Mode 시작", use_container_width=True, on_click=lambda: (st.session_state.update({"mode": "Auto", "step": 1})))
     with col2:
-        st.warning("⚙️ **Manual Mode**\n\n전문가용. AI 추천값을 기반으로 정밀 튜닝이 가능합니다.")
+        st.warning("⚙️ **Manual Mode**\n\n전문가용. AI 추천값을 초기값으로 두고 모든 파라미터를 정밀 튜닝합니다.")
         st.button("Manual Mode 시작", use_container_width=True, on_click=lambda: (st.session_state.update({"mode": "Manual", "step": 1})))
 
 elif st.session_state.step == 1:
@@ -267,7 +263,7 @@ elif st.session_state.step == 1:
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
-# [Phase 2] AI 추천 및 확장 설계 가이드 (Robust Json & Table)
+# [Phase 2] AI 추천 및 코일 자동 추천 반영
 # ==========================================
 elif st.session_state.step == 2:
     st.header("Step 2. AI 엔지니어 종합 설계 제안")
@@ -277,28 +273,30 @@ elif st.session_state.step == 2:
     else:
         sd = st.session_state.project_data
         if st.session_state.llm_result is None:
-            with st.status("🧠 AI 수석 엔지니어 다각도 분석 중 (최대 1분 소요될 수 있습니다)...", expanded=True) as status:
+            with st.status("🧠 AI 수석 엔지니어 분석 중 (최대 1분 소요될 수 있습니다)...", expanded=True) as status:
                 for attempt in range(3):
                     try:
                         model = genai.GenerativeModel(selected_model)
                         prompt = f"""
-                        You are an expert WPT Engineer. Analyze:
-                        App: {sd['app_type']}, Power: {sd['target_power']}W, Vout: {sd['battery_vol_charge']}V, RxWeight: {sd['rx_weight']}g, AirGap: {sd['air_gap']}mm.
-                        Respond ONLY in JSON.
+                        You are an expert WPT Engineer. Analyze the following constraints:
+                        Application: {sd['app_type']}, Target Power: {sd['target_power']}W, Vout: {sd['battery_vol_charge']}V, RxWeight Limit: {sd['rx_weight']}g, AirGap: {sd['air_gap']}mm.
+                        
+                        Based on real-world WPT design papers for this application, please provide practical recommendations for the coil inductances (Ltx, Lrx) and coupling coefficient (k). Ensure that the chosen values result in a physically realizable system.
+                        Respond ONLY in a flat JSON format:
                         {{
                             "topology": "Choose ONE: SS, SP, LCC-S, Double LCC",
-                            "reasoning": "Explain why this topology is best for {sd['app_type']}.",
-                            "recommended_vin": <integer>,
+                            "reasoning": "Explain why this topology is best.",
+                            "recommended_vin": <integer (e.g. 100, 220, 400)>,
                             "recommended_f0": 85,
-                            "estimated_m": <float>,
-                            "coil_design": "Recommend a coil shape (Circular, Rectangular, DD) and why.",
+                            "recommended_ltx": <float representing Tx inductance in uH, e.g., 50.0 to 300.0>,
+                            "recommended_lrx": <float representing Rx inductance in uH, e.g., 20.0 to 100.0>,
+                            "recommended_k": <float between 0.05 and 0.5>,
+                            "coil_design": "Recommend a coil shape (Circular, Rectangular, DD) and explain why.",
                             "shielding_guide": "Advice on ferrite core and shielding."
                         }}
                         """
-                        # 타임아웃 60초로 변경
                         resp = model.generate_content(prompt, request_options={"timeout": 60.0})
                         
-                        # 완벽한 JSON 추출 (정규표현식 사용)
                         match = re.search(r'\{.*\}', resp.text, re.DOTALL)
                         if match:
                             st.session_state.llm_result = json.loads(match.group(0))
@@ -308,15 +306,18 @@ elif st.session_state.step == 2:
                             
                     except Exception as e:
                         if attempt == 2:
-                            # 3번 다 실패했을 때 최후의 수단 (Rate Limit 등의 에러 대응)
+                            # AI 실패 시 자체 로직 (estimate_coil_params 이용)
                             if sd['rx_weight'] < 100 or sd['target_power'] < 50: topo = "SS"
                             elif sd['battery_vol_charge'] > 100: topo = "SP"
                             elif sd['target_power'] > 1000: topo = "Double LCC"
                             else: topo = "LCC-S"
+                            
+                            cp = estimate_coil_params(sd['air_gap'], sd['rx_weight'])
                             st.session_state.llm_result = {
                                 "topology": topo, 
-                                "reasoning": "무료 API 호출 한도 초과(분당 15회) 또는 서버 지연으로 인해 시스템 내부 알고리즘이 대신 토폴로지를 선정했습니다. (수분 후 다시 시도하시면 AI가 응답합니다.)", 
-                                "recommended_vin": 100, "recommended_f0": 85, "estimated_m": 15.0,
+                                "reasoning": "서버 지연 또는 할당량 초과로 인해 내부 알고리즘이 대신 토폴로지를 선정했습니다. (수분 후 다시 시도하시면 AI가 응답합니다.)", 
+                                "recommended_vin": 100, "recommended_f0": 85, 
+                                "recommended_ltx": cp["Ltx"], "recommended_lrx": cp["Lrx"], "recommended_k": cp["k"],
                                 "coil_design": "원형(Circular) 코일은 설계가 간단하고 효율이 우수합니다. 오정렬이 심하다면 DD 코일을 고려하세요.",
                                 "shielding_guide": "무게 제약에 맞춰 1~2mm 두께의 얇은 페라이트 시트(Ferrite Sheet)를 사용하세요."
                             }
@@ -347,12 +348,11 @@ elif st.session_state.step == 2:
         st.table(df_topo)
         st.markdown('</div>', unsafe_allow_html=True)
 
-        # 세션 데이터 저장 및 다음 단계 이동
-        cp = estimate_coil_params(res['estimated_m'], sd['air_gap'], sd['rx_weight'])
+        # 세션 데이터 저장 (AI가 추론한 Ltx, Lrx, k 값을 초기값으로 저장)
         st.session_state.tuning_data = {
             "topology": res['topology'], "Vin": float(res['recommended_vin']), 
-            "f0": res['recommended_f0']*1000, "Ltx": float(cp['Ltx']), "Lrx": float(cp['Lrx']), 
-            "k": float(cp['k']), "ratio": 1.5, "Rtx": 0.085, "Rrx": 0.074
+            "f0": res['recommended_f0']*1000, "Ltx": float(res['recommended_ltx']), "Lrx": float(res['recommended_lrx']), 
+            "k": float(res['recommended_k']), "ratio": 1.5, "Rtx": 0.085, "Rrx": 0.074
         }
         
         n1, n2, n3 = st.columns([1, 1, 2])
@@ -374,9 +374,15 @@ elif st.session_state.step == 3:
     with col1:
         st.subheader("🛠️ 설계 파라미터 조작")
         topo_sel = st.selectbox("토폴로지 변경", ["SS", "SP", "LCC-S", "Double LCC"], index=["SS", "SP", "LCC-S", "Double LCC"].index(td['topology']))
-        Ltx = st.slider("송신 코일 Ltx (uH)", 10.0, 300.0, float(td['Ltx']))
-        Lrx = st.slider("수신 코일 Lrx (uH)", 10.0, 150.0, float(td['Lrx']))
-        k = st.slider("결합 계수 k", 0.05, 0.5, float(td['k']))
+        
+        # 슬라이더 범위 대폭 확장 (AI가 추천한 값이 범위를 벗어나 에러나는 것 방지)
+        safe_ltx = min(max(float(td['Ltx']), 10.0), 1000.0)
+        safe_lrx = min(max(float(td['Lrx']), 10.0), 500.0)
+        safe_k = min(max(float(td['k']), 0.01), 0.90)
+        
+        Ltx = st.slider("송신 코일 Ltx (uH)", 10.0, 1000.0, safe_ltx)
+        Lrx = st.slider("수신 코일 Lrx (uH)", 10.0, 500.0, safe_lrx)
+        k = st.slider("결합 계수 k", 0.01, 0.90, safe_k)
         vin = st.number_input("입력 전압 Vin (V)", value=td['Vin'])
         f0 = st.number_input("주파수 f0 (kHz)", value=td['f0']/1000) * 1000
         ratio = st.slider("전류 비율 (Itx/Irx)", 0.5, 3.0, 1.5) if "Double" in topo_sel else 1.0
@@ -388,7 +394,8 @@ elif st.session_state.step == 3:
         elif topo_sel == "LCC-S": res = calculate_lccs(vin, sd['battery_vol_charge'], sd['target_power'], f0, Ltx*1e-6, Lrx*1e-6, k, 0.085, 0.074)
         else: res = calculate_double_lcc(vin, sd['battery_vol_charge'], sd['target_power'], f0, Ltx*1e-6, Lrx*1e-6, k, ratio, 0.085, 0.074)
             
-        if "error" in res: st.error(res['error'])
+        if "error" in res: 
+            st.error(res['error'])
         else:
             p1, p2, p3, p4 = st.columns(4)
             p1.metric("상호 인덕턴스 (M)", f"{res['M']*1e6:.1f} uH")
@@ -399,6 +406,21 @@ elif st.session_state.step == 3:
             p5, p6 = st.columns(2)
             p5.metric("목표 전력", f"{sd['target_power']:.1f} W")
             p6.metric("실제 설계 전력", f"{res['Pout_actual']:.1f} W")
+
+            # Step 3 화면에 공진 소자 실시간 프리뷰 추가
+            st.divider()
+            st.markdown("**🔹 공진 커패시터 및 추가 인덕터 실시간 계산값**")
+            cap_cols = st.columns(len(res['caps']) + (1 if topo_sel == 'LCC-S' else (2 if 'Double' in topo_sel else 0)))
+            idx = 0
+            for name, data in res['caps'].items():
+                cap_cols[idx].metric(name, f"{data['val']*1e9:.2f} nF")
+                idx += 1
+                
+            if topo_sel == "LCC-S":
+                cap_cols[idx].metric("Tx 보상 인덕터 (Ls)", f"{res['Ls']*1e6:.1f} uH")
+            elif 'Double' in topo_sel:
+                cap_cols[idx].metric("Tx 보상 인덕터", f"{res['Llcc_tx']*1e6:.1f} uH")
+                cap_cols[idx+1].metric("Rx 보상 인덕터", f"{res['Llcc_rx']*1e6:.1f} uH")
 
             st.markdown(f"<div class='ai-coach'>💡 <b>AI 실시간 코칭</b><br>{generate_ai_coaching(res)}</div>", unsafe_allow_html=True)
             
@@ -427,6 +449,8 @@ elif st.session_state.step == 4:
     
     if "error" in res:
         st.error(f"설계 오류: {res['error']}")
+        if st.session_state.mode == 'Auto':
+            st.warning("⚠️ **초심자 모드 오류 안내:** AI가 제안한 초기 코일 파라미터 간의 물리적 한계로 계산이 불가능합니다. 'Step 3로 돌아가기'를 누르신 후, **Ltx(송신 코일)를 키우거나 k(결합계수)를 높여서** 에러를 해결해 주세요.")
         st.button("⬅️ Step 3로 돌아가기", on_click=go_to_step, args=(3,))
         st.stop()
 
@@ -458,8 +482,8 @@ elif st.session_state.step == 4:
     c4.metric("상호 인덕턴스 (M)", f"{res['M']*1e6:.1f} uH", help=r"$M = k \sqrt{L_{tx} L_{rx}}$")
     
     c5, c6 = st.columns(2)
-    c5.metric("송신 코일 전류 (Itx_rms)", f"{res['Itx']:.2f} A", help=f"Tx 코일에 흐르는 AC RMS 전류입니다. 코일 동손(Copper Loss) 약 {res['P_loss_tx']:.1f}W 예상.")
-    c6.metric("수신 코일 전류 (Irx_rms)", f"{res['Irx']:.2f} A", help=f"Rx 코일에 흐르는 AC RMS 전류입니다. 코일 동손(Copper Loss) 약 {res['P_loss_rx']:.1f}W 예상.")
+    c5.metric("송신 코일 전류 (Itx_rms)", f"{res['Itx']:.2f} A", help=f"Tx 코일에 흐르는 AC RMS 전류입니다. 코일 동손 약 {res['P_loss_tx']:.1f}W 예상.")
+    c6.metric("수신 코일 전류 (Irx_rms)", f"{res['Irx']:.2f} A", help=f"Rx 코일에 흐르는 AC RMS 전류입니다. 코일 동손 약 {res['P_loss_rx']:.1f}W 예상.")
     
     st.divider()
     st.markdown("**🔹 공진 커패시터 및 추가 인덕터 설계값**")
