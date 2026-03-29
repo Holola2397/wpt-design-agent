@@ -5,31 +5,28 @@ import pandas as pd
 st.set_page_config(page_title="WPT Design Platform", layout="wide", initial_sidebar_state="collapsed")
 
 # --- [Custom CSS] 적응형(Adaptive) 스타일 적용 ---
-# 색상을 강제하지 않고 Streamlit의 CSS 변수(var(--text-color) 등)를 활용하여 테마 전환에 완벽히 대응합니다.
 st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
     
-    /* 전체 폰트 적용 */
     html, body, [class*="css"] {
         font-family: 'Inter', sans-serif;
     }
     
-    /* 폼(Form) 카드 UI: 테마에 맞춰 배경색 자동 변경 */
-    div[data-testid="stForm"] {
+    /* 폼(Form)을 없앤 대신, 섹션을 카드 형태로 묶어주는 CSS 클래스 생성 */
+    .card-container {
         background-color: var(--secondary-background-color);
         border: 1px solid var(--border-color, rgba(128, 128, 128, 0.2));
         border-radius: 16px;
         padding: 24px;
         box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+        margin-bottom: 24px;
     }
     
-    /* 입력창 모서리 둥글게 */
     .stTextInput>div>div>input, .stNumberInput>div>div>input, .stSelectbox>div>div>select {
         border-radius: 8px !important;
     }
     
-    /* 버튼 디자인 (애플 스타일 Primary Blue 고정) */
     .stButton>button {
         background-color: #0A84FF !important;
         color: white !important;
@@ -44,12 +41,10 @@ st.markdown("""
         transform: scale(1.02);
     }
     
-    /* 프로그레스 바 색상 고정 */
     .stProgress > div > div > div > div {
         background-color: #0A84FF !important;
     }
     
-    /* 헤더 텍스트 디자인 */
     h1, h2, h3, h4 {
         font-weight: 600 !important;
         letter-spacing: -0.5px;
@@ -103,75 +98,86 @@ elif st.session_state.step == 1:
     st.header("Step 1. 시스템 요구사항 및 제약 조건 입력")
     st.caption("설계하고자 하는 어플리케이션의 물리적, 전기적 한계를 정의합니다.")
     
-    with st.form("constraints_form"):
-        st.subheader("🔋 어플리케이션 및 배터리 시스템")
-        c1, c2, c3, c4 = st.columns([2, 2, 1, 1])
-        with c1:
-            app_type = st.selectbox("어플리케이션 분야", ["드론 (UAV)", "사족보행 로봇", "AGV/AMR", "전기차 (EV)", "모바일/가전"])
-            target_power = st.number_input("목표 충전 전력 (W)", value=300.0, step=50.0)
-        with c2:
-            battery_type = st.selectbox("배터리 셀 화학 조성", ["Li-ion (3.7V)", "LiPo (3.7V)", "LFP (3.2V)"])
-        with c3:
-            battery_cells = st.number_input("직렬 셀 구성 (S)", min_value=1, value=13, step=1)
-        with c4:
+    # st.form을 제거하여 실시간 위젯 업데이트(Reactivity) 활성화
+    st.markdown('<div class="card-container">', unsafe_allow_html=True)
+    
+    st.subheader("🔋 어플리케이션 및 배터리 시스템")
+    c1, c2 = st.columns([1, 1.2])
+    with c1:
+        app_type = st.selectbox("어플리케이션 분야", ["드론 (UAV)", "사족보행 로봇", "AGV/AMR", "전기차 (EV)", "모바일/가전"])
+        target_power = st.number_input("목표 충전 전력 (W)", value=300.0, step=50.0)
+    with c2:
+        battery_type = st.selectbox("배터리 셀 화학 조성", ["Li-ion (3.7V)", "LiPo (3.7V)", "LFP (3.2V)"])
+        
+        b1, b2, b3 = st.columns([1, 1.2, 1])
+        with b1:
+            battery_cells = st.number_input("직렬 셀 (S)", min_value=1, value=13, step=1)
+        with b2:
+            battery_capacity = st.number_input("용량 (mAh)", min_value=100, value=22000, step=1000)
+        with b3:
+            # 실시간 전압 및 총 에너지(Wh) 연산
             unit_v = 3.2 if "LFP" in battery_type else 3.7
             battery_vol = unit_v * battery_cells
-            st.metric("팩 공칭 전압", f"{battery_vol:.1f} V")
+            battery_wh = (battery_capacity / 1000) * battery_vol
+            st.metric("팩 공칭 전압", f"{battery_vol:.1f} V", f"총 {battery_wh:.0f} Wh", delta_color="off")
+    
+    st.divider()
+    
+    st.subheader("📐 가용 공간 제약 (Dimensions)")
+    st.caption("단위: mm (가로 x 세로 x 두께)")
+    
+    st.markdown("**1. 마그네틱 코일 패드부**")
+    pad_c1, pad_c2 = st.columns(2)
+    with pad_c1:
+        st.caption("송신 패드 (Tx)")
+        tx_cw, tx_cl, tx_ch = st.columns(3)
+        tx_coil_w = tx_cw.number_input("가로 (W)", key='tcw', value=200, step=10)
+        tx_coil_l = tx_cl.number_input("세로 (L)", key='tcl', value=200, step=10)
+        tx_coil_h = tx_ch.number_input("두께 (H)", key='tch', value=10, step=1)
+    with pad_c2:
+        st.caption("수신 패드 (Rx)")
+        rx_cw, rx_cl, rx_ch = st.columns(3)
+        rx_coil_w = rx_cw.number_input("가로 (W)", key='rcw', value=100, step=10)
+        rx_coil_l = rx_cl.number_input("세로 (L)", key='rcl', value=100, step=10)
+        rx_coil_h = rx_ch.number_input("두께 (H)", key='rch', value=5, step=1)
+
+    st.write("<br>", unsafe_allow_html=True)
+
+    st.markdown("**2. 전력 회로부 (인버터/정류기 및 보상회로)**")
+    pwr_c1, pwr_c2 = st.columns(2)
+    with pwr_c1:
+        st.caption("송신 회로보드 (Tx)")
+        tx_pw, tx_pl, tx_ph = st.columns(3)
+        tx_pwr_w = tx_pw.number_input("가로 (W)", key='tpw', value=150, step=10)
+        tx_pwr_l = tx_pl.number_input("세로 (L)", key='tpl', value=100, step=10)
+        tx_pwr_h = tx_ph.number_input("두께 (H)", key='tph', value=30, step=1)
+    with pwr_c2:
+        st.caption("수신 회로보드 (Rx)")
+        rx_pw, rx_pl, rx_ph = st.columns(3)
+        rx_pwr_w = rx_pw.number_input("가로 (W)", key='rpw', value=80, step=10)
+        rx_pwr_l = rx_pl.number_input("세로 (L)", key='rpl', value=60, step=10)
+        rx_pwr_h = rx_ph.number_input("두께 (H)", key='rph', value=15, step=1)
+
+    st.divider()
+
+    st.subheader("⚖️ 무게 및 환경 제약")
+    w_c1, w_c2, w_c3 = st.columns(3)
+    with w_c1:
+        rx_weight_limit = st.number_input("수신부(Rx) 허용 총 무게 (g)", value=400, step=50, help="코일과 회로를 합친 모빌리티 탑재측 최대 무게입니다.")
+    with w_c2:
+        tx_weight_limit = st.number_input("송신부(Tx) 허용 총 무게 (kg)", value=5.0, step=1.0)
+    with w_c3:
+        air_gap = st.number_input("목표 이격 거리 (Air Gap, mm)", value=50, step=5)
         
-        st.divider()
-        
-        st.subheader("📐 가용 공간 제약 (Dimensions)")
-        st.caption("단위: mm (가로 x 세로 x 두께)")
-        
-        st.markdown("**1. 마그네틱 코일 패드부**")
-        pad_c1, pad_c2 = st.columns(2)
-        with pad_c1:
-            st.caption("송신 패드 (Tx)")
-            tx_cw, tx_cl, tx_ch = st.columns(3)
-            tx_coil_w = tx_cw.number_input("가로 (W)", key='tcw', value=200, step=10)
-            tx_coil_l = tx_cl.number_input("세로 (L)", key='tcl', value=200, step=10)
-            tx_coil_h = tx_ch.number_input("두께 (H)", key='tch', value=10, step=1)
-        with pad_c2:
-            st.caption("수신 패드 (Rx)")
-            rx_cw, rx_cl, rx_ch = st.columns(3)
-            rx_coil_w = rx_cw.number_input("가로 (W)", key='rcw', value=100, step=10)
-            rx_coil_l = rx_cl.number_input("세로 (L)", key='rcl', value=100, step=10)
-            rx_coil_h = rx_ch.number_input("두께 (H)", key='rch', value=5, step=1)
-
-        st.write("<br>", unsafe_allow_html=True)
-
-        st.markdown("**2. 전력 회로부 (인버터/정류기 및 보상회로)**")
-        pwr_c1, pwr_c2 = st.columns(2)
-        with pwr_c1:
-            st.caption("송신 회로보드 (Tx)")
-            tx_pw, tx_pl, tx_ph = st.columns(3)
-            tx_pwr_w = tx_pw.number_input("가로 (W)", key='tpw', value=150, step=10)
-            tx_pwr_l = tx_pl.number_input("세로 (L)", key='tpl', value=100, step=10)
-            tx_pwr_h = tx_ph.number_input("두께 (H)", key='tph', value=30, step=1)
-        with pwr_c2:
-            st.caption("수신 회로보드 (Rx)")
-            rx_pw, rx_pl, rx_ph = st.columns(3)
-            rx_pwr_w = rx_pw.number_input("가로 (W)", key='rpw', value=80, step=10)
-            rx_pwr_l = rx_pl.number_input("세로 (L)", key='rpl', value=60, step=10)
-            rx_pwr_h = rx_ph.number_input("두께 (H)", key='rph', value=15, step=1)
-
-        st.divider()
-
-        st.subheader("⚖️ 무게 및 환경 제약")
-        w_c1, w_c2, w_c3 = st.columns(3)
-        with w_c1:
-            rx_weight_limit = st.number_input("수신부(Rx) 허용 총 무게 (g)", value=400, step=50, help="코일과 회로를 합친 모빌리티 탑재측 최대 무게입니다.")
-        with w_c2:
-            tx_weight_limit = st.number_input("송신부(Tx) 허용 총 무게 (kg)", value=5.0, step=1.0)
-        with w_c3:
-            air_gap = st.number_input("목표 이격 거리 (Air Gap, mm)", value=50, step=5)
-            
-        st.write("<br>", unsafe_allow_html=True)
-        submitted = st.form_submit_button("입력 완료 및 다음 단계로 ➔")
-        if submitted:
+    st.write("<br>", unsafe_allow_html=True)
+    
+    # 폼 대신 일반 버튼을 활용하여 다음 단계로 이동
+    c1, c2 = st.columns([4, 1])
+    with c2:
+        if st.button("입력 완료 및 다음 단계로 ➔", use_container_width=True):
             st.session_state.project_data = {
                 "app_type": app_type,
-                "battery": f"{battery_cells}S {battery_type} ({battery_vol:.1f}V)",
+                "battery": f"{battery_cells}S {battery_type} ({battery_vol:.1f}V, {battery_capacity}mAh, {battery_wh:.0f}Wh)",
                 "target_power": target_power,
                 "rx_weight": rx_weight_limit,
                 "air_gap": air_gap,
@@ -181,6 +187,9 @@ elif st.session_state.step == 1:
                 "rx_pwr_size": f"{rx_pwr_w}x{rx_pwr_l}x{rx_pwr_h}",
             }
             go_to_step(2)
+            st.rerun() # 즉각적인 화면 전환 렌더링
+            
+    st.markdown('</div>', unsafe_allow_html=True)
             
     st.button("⬅️ 메인으로 돌아가기", on_click=go_to_step, args=(0,))
 
