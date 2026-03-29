@@ -32,7 +32,8 @@ st.markdown("""
     .cap-table { width: 100%; text-align: center; border-collapse: collapse; margin-top: 10px; }
     .cap-table th, .cap-table td { border: 1px solid var(--border-color); padding: 8px; }
     .cap-table th { background-color: rgba(128, 128, 128, 0.1); }
-    .ai-coach { background-color: rgba(10, 132, 255, 0.1); border-left: 4px solid #0A84FF; padding: 15px; border-radius: 8px; margin-top: 15px; }
+    .ai-coach { background-color: rgba(10, 132, 255, 0.08); border-left: 4px solid #0A84FF; padding: 15px; border-radius: 8px; margin-top: 15px; }
+    .chat-box { background-color: var(--background-color); border: 1px solid var(--border-color); border-radius: 12px; padding: 15px; margin-top: 10px; height: 300px; overflow-y: auto;}
     </style>
 """, unsafe_allow_html=True)
 
@@ -45,6 +46,7 @@ if 'project_data' not in st.session_state: st.session_state.project_data = {}
 if 'llm_result' not in st.session_state: st.session_state.llm_result = None
 if 'tuning_data' not in st.session_state: st.session_state.tuning_data = {}
 if 'lang' not in st.session_state: st.session_state.lang = 'KR'
+if 'chat_history' not in st.session_state: st.session_state.chat_history = []
 
 def go_to_step(step_num): st.session_state.step = step_num
 def reset_project(): 
@@ -53,6 +55,7 @@ def reset_project():
     st.session_state.llm_result = None
     st.session_state.project_data = {}
     st.session_state.tuning_data = {}
+    st.session_state.chat_history = []
 
 def t(kr, en): return kr if st.session_state.lang == 'KR' else en
 
@@ -104,7 +107,7 @@ def calculate_lccs(Vin, Vout_cv, Pout, f0, Ltx, Lrx, k, Rtx, Rrx):
         Vrect_in = Vout_cv * math.pi / (2 * math.sqrt(2)); Iout_ac = Iout * (2 * math.sqrt(2)) / math.pi
         M = k * math.sqrt(Ltx * Lrx)
         Itx = Vrect_in / (w * M); Irx = Iout_ac; Ls = Vin_ac_rms / (w * Itx)
-        if Ls >= Ltx: return {"error": t("Ls > Ltx (보상 불가: 입력전압을 낮추거나, Ltx/k를 높이세요)", "Ls > Ltx (Cannot compensate. Lower Vin or increase Ltx/k)")}
+        if Ls >= Ltx: return {"error": t("Ls > Ltx (보상 불가: 입력전압(Vin)을 낮추거나, 좌측 슬라이더에서 Ltx를 키우거나, 결합계수(k)를 높이세요)", "Ls > Ltx (Cannot compensate. Lower Vin or increase Ltx/k)")}
         Cp = 1 / (w**2 * Ls); Cs = 1 / (w**2 * (Ltx - Ls)); Crx = 1 / (w**2 * Lrx)
         P_out_ac = (Irx**2) * RLeq; P_loss_tx = (Itx**2) * Rtx; P_loss_rx = (Irx**2) * Rrx
         eff = (P_out_ac / (P_out_ac + P_loss_tx + P_loss_rx)) * 100
@@ -120,7 +123,7 @@ def calculate_double_lcc(Vin, Vout_cv, Pout, f0, Ltx, Lrx, k, current_ratio, Rtx
         M = k * math.sqrt(Ltx * Lrx)
         L_prod = (M * Vin_ac_rms) / (w * Iout_ac); L_rat = current_ratio * (Vrect_in / Vin_ac_rms)
         Llcc_tx = math.sqrt(L_prod / L_rat); Llcc_rx = math.sqrt(L_prod * L_rat)
-        if Llcc_tx >= Ltx or Llcc_rx >= Lrx: return {"error": t("Llcc > Ltx/Lrx (설계 불가: 코일 인덕턴스 부족)", "Llcc > Ltx/Lrx (Inductance too small)")}
+        if Llcc_tx >= Ltx or Llcc_rx >= Lrx: return {"error": t("Llcc > Ltx/Lrx (설계 불가: 좌측 슬라이더에서 송/수신 코일 인덕턴스(Ltx/Lrx)를 더 키우세요)", "Llcc > Ltx/Lrx (Increase Ltx/Lrx in sliders)")}
         Clcc_tx = 1 / (w**2 * Llcc_tx); Clcc_rx = 1 / (w**2 * Llcc_rx)
         Cp_tx = 1 / (w**2 * (Ltx - Llcc_tx)); Cp_rx = 1 / (w**2 * (Lrx - Llcc_rx))
         Itx = Vin_ac_rms / (w * Llcc_tx); Irx = Vrect_in / (w * Llcc_rx)
@@ -130,82 +133,55 @@ def calculate_double_lcc(Vin, Vout_cv, Pout, f0, Ltx, Lrx, k, current_ratio, Rtx
         return {"Itx": Itx, "Irx": Irx, "Iout": Iout, "Vout": Vout_cv, "M": M, "Llcc_tx": Llcc_tx, "Llcc_rx": Llcc_rx, "efficiency": eff, "Vin_ac": Vin_ac_rms, "RLeq": RLeq, "Pout_actual": Pout, "caps": caps, "P_loss_tx": P_loss_tx, "P_loss_rx": P_loss_rx}
     except Exception as e: return {"error": f"Error: {str(e)}"}
 
-# 주파수 응답 AC 방정식 완벽 수정본
 def simulate_frequency_response(topology, res_dict, f0, Ltx, Lrx, M, Rtx, Rrx):
-    f_arr = np.linspace(f0 - 20e3, f0 + 20e3, 300)
-    w_arr = 2 * np.pi * f_arr
+    f_arr = np.linspace(f0 - 20e3, f0 + 20e3, 300); w_arr = 2 * np.pi * f_arr
     Vin_ac, RLeq = res_dict["Vin_ac"], res_dict["RLeq"]
-    
-    P_out_arr = np.zeros_like(f_arr)
-    P_in_arr = np.zeros_like(f_arr)
-    
+    P_out_arr, P_in_arr = np.zeros_like(f_arr), np.zeros_like(f_arr)
     try:
         if topology == "SS":
             Ctx, Crx = res_dict['Ctx'], res_dict['Crx']
             Z_rx = RLeq + Rrx + 1j*w_arr*Lrx + 1/(1j*w_arr*Crx)
             Z_in = Rtx + 1j*w_arr*Ltx + 1/(1j*w_arr*Ctx) + (w_arr * M)**2 / Z_rx
-            I_in = Vin_ac / Z_in
-            I_rx = (1j * w_arr * M * I_in) / Z_rx
-            P_out_arr = (np.abs(I_rx)**2) * RLeq
-            P_in_arr = np.real(Vin_ac * np.conj(I_in))
-            
+            I_in = Vin_ac / Z_in; I_rx = (1j * w_arr * M * I_in) / Z_rx
+            P_out_arr = (np.abs(I_rx)**2) * RLeq; P_in_arr = np.real(Vin_ac * np.conj(I_in))
         elif topology == "SP":
             Ctx, Crx = res_dict['Ctx'], res_dict['Crx']
-            Z_p = 1 / (1/RLeq + 1j*w_arr*Crx)
-            Z_rx = Rrx + 1j*w_arr*Lrx + Z_p
+            Z_p = 1 / (1/RLeq + 1j*w_arr*Crx); Z_rx = Rrx + 1j*w_arr*Lrx + Z_p
             Z_in = Rtx + 1j*w_arr*Ltx + 1/(1j*w_arr*Ctx) + (w_arr * M)**2 / Z_rx
-            I_in = Vin_ac / Z_in
-            I_rx_coil = (1j * w_arr * M * I_in) / Z_rx
-            V_rx_load = I_rx_coil * Z_p
-            P_out_arr = (np.abs(V_rx_load)**2) / RLeq
+            I_in = Vin_ac / Z_in; I_rx_coil = (1j * w_arr * M * I_in) / Z_rx
+            V_rx_load = I_rx_coil * Z_p; P_out_arr = (np.abs(V_rx_load)**2) / RLeq
             P_in_arr = np.real(Vin_ac * np.conj(I_in))
-            
         elif topology == "LCC-S":
             Ls, Cp, Cs, Crx = res_dict['Ls'], res_dict['Cp'], res_dict['Cs'], res_dict['Crx']
             Z_rx = RLeq + Rrx + 1j*w_arr*Lrx + 1/(1j*w_arr*Crx)
             Z_tx_main = Rtx + 1j*w_arr*Ltx + 1/(1j*w_arr*Cs) + (w_arr * M)**2 / Z_rx
             Z_p = (1/(1j*w_arr*Cp)) * Z_tx_main / ((1/(1j*w_arr*Cp)) + Z_tx_main)
-            Z_in = 1j*w_arr*Ls + Z_p
-            I_in = Vin_ac / Z_in
-            I_tx = I_in * Z_p / Z_tx_main
-            I_rx = (1j * w_arr * M * I_tx) / Z_rx
-            P_out_arr = (np.abs(I_rx)**2) * RLeq
-            P_in_arr = np.real(Vin_ac * np.conj(I_in))
-            
-        else: # Double LCC
+            Z_in = 1j*w_arr*Ls + Z_p; I_in = Vin_ac / Z_in
+            I_tx = I_in * Z_p / Z_tx_main; I_rx = (1j * w_arr * M * I_tx) / Z_rx
+            P_out_arr = (np.abs(I_rx)**2) * RLeq; P_in_arr = np.real(Vin_ac * np.conj(I_in))
+        else:
             Llcc_tx, Cp_tx, Clcc_tx = res_dict['Llcc_tx'], res_dict['Cp_tx'], res_dict['Clcc_tx']
             Llcc_rx, Cp_rx, Clcc_rx = res_dict['Llcc_rx'], res_dict['Cp_rx'], res_dict['Clcc_rx']
-            
             Z_load_b = RLeq + 1j*w_arr*Llcc_rx + 1/(1j*w_arr*Clcc_rx)
             Z_prx = (1/(1j*w_arr*Cp_rx)) * Z_load_b / ((1/(1j*w_arr*Cp_rx)) + Z_load_b)
-            Z_rx_tot = Rrx + 1j*w_arr*Lrx + Z_prx
-            Z_refl = (w_arr * M)**2 / Z_rx_tot
-            
+            Z_rx_tot = Rrx + 1j*w_arr*Lrx + Z_prx; Z_refl = (w_arr * M)**2 / Z_rx_tot
             Z_tx_main = Rtx + 1j*w_arr*Ltx + Z_refl
             Z_ptx = (1/(1j*w_arr*Cp_tx)) * Z_tx_main / ((1/(1j*w_arr*Cp_tx)) + Z_tx_main)
             Z_in = 1j*w_arr*Llcc_tx + 1/(1j*w_arr*Clcc_tx) + Z_ptx
-            
-            I_in = Vin_ac / Z_in
-            I_tx = I_in * Z_ptx / Z_tx_main
-            I_rx_coil = (1j * w_arr * M * I_tx) / Z_rx_tot
-            I_out_ac = I_rx_coil * Z_prx / Z_load_b
-            
-            P_out_arr = (np.abs(I_out_ac)**2) * RLeq
-            P_in_arr = np.real(Vin_ac * np.conj(I_in))
-            
+            I_in = Vin_ac / Z_in; I_tx = I_in * Z_ptx / Z_tx_main
+            I_rx_coil = (1j * w_arr * M * I_tx) / Z_rx_tot; I_out_ac = I_rx_coil * Z_prx / Z_load_b
+            P_out_arr = (np.abs(I_out_ac)**2) * RLeq; P_in_arr = np.real(Vin_ac * np.conj(I_in))
     except: pass
-    
-    eff_arr = np.where(P_in_arr > 0, (P_out_arr / P_in_arr) * 100, 0)
-    eff_arr = np.clip(eff_arr, 0, 100) # Cap at 100% 
+    eff_arr = np.clip(np.where(P_in_arr > 0, (P_out_arr / P_in_arr) * 100, 0), 0, 100)
     return pd.DataFrame({"Frequency (kHz)": f_arr / 1000, "Output Power (W)": P_out_arr, "Efficiency (%)": eff_arr})
 
 def generate_ai_coaching(res):
     advice = []
-    if res['Itx'] > 15.0: advice.append(t(f"🔥 **Tx 발열 경고:** 송신 전류({res['Itx']:.1f}A)가 매우 높습니다. 동손({res['P_loss_tx']:.1f}W)을 줄이려면 Vin을 높이거나 Ltx를 키우세요.", f"🔥 **High Tx Temp:** Itx({res['Itx']:.1f}A) is too high. Increase Vin or Ltx."))
-    if res['Irx'] > 10.0: advice.append(t(f"🔥 **Rx 발열 경고:** 수신 전류({res['Irx']:.1f}A)가 높아 발열({res['P_loss_rx']:.1f}W)이 우려됩니다.", f"🔥 **High Rx Temp:** Irx({res['Irx']:.1f}A) is high. Check cooling."))
-    if res['efficiency'] < 85.0: advice.append(t("📉 **효율 저하:** 효율이 낮습니다. 결합계수(k)를 높이거나 오정렬을 줄이세요.", "📉 **Low Efficiency:** Try increasing coupling coefficient (k)."))
-    if not advice: advice.append(t("✅ **설계 양호:** 코일 전류 및 손실, 효율이 안정적인 범위 내에 있습니다.", "✅ **Optimal:** Parameters are within safe operational limits."))
-    return "<br>".join(advice)
+    if res['Itx'] > 15.0: advice.append(t(f"🔥 **Tx 발열 경고:** 송신 전류({res['Itx']:.1f}A)가 매우 높습니다.<br>👉 **[해결책]:** 좌측 슬라이더에서 **입력 전압(Vin)**을 더 높이거나, **송신 코일(Ltx)**을 더 키워서 전류를 10A 이하로 낮추세요.", f"🔥 **High Tx Temp:** Itx({res['Itx']:.1f}A) is too high.<br>👉 **[Action]:** Increase Vin or Ltx slider."))
+    if res['Irx'] > 10.0: advice.append(t(f"🔥 **Rx 발열 경고:** 수신 전류({res['Irx']:.1f}A)가 높습니다.<br>👉 **[해결책]:** 배터리 전압이 낮아서 발생하는 현상입니다. Step 1에서 **배터리 직렬(S)** 수를 늘려 Vout을 높이는 것을 권장합니다.", f"🔥 **High Rx Temp:** Irx({res['Irx']:.1f}A) is high.<br>👉 **[Action]:** Increase Battery Series (S) in Step 1."))
+    if res['efficiency'] < 85.0: advice.append(t("📉 **효율 저하:** 현재 효율이 85% 미만입니다.<br>👉 **[해결책]:** 슬라이더에서 **결합계수(k)**를 높여보세요. 물리적으로는 코일 크기를 키우거나 이격 거리를 줄여야 합니다.", "📉 **Low Efficiency:** Efficiency < 85%.<br>👉 **[Action]:** Increase coupling coefficient (k)."))
+    if not advice: advice.append(t("✅ **설계 양호:** 코일 전류 및 효율이 모두 안정적인 범위 내에 있습니다. 이대로 확정하셔도 좋습니다.", "✅ **Optimal Design:** Parameters are stable. Good to finalize."))
+    return "<br><br>".join(advice)
 
 # ==========================================
 # [Sidebar - Language & Config]
@@ -259,26 +235,21 @@ elif st.session_state.step == 1:
     batt_t = c2.selectbox(t("배터리 셀 타입", "Battery Cell Type"), ["Li-ion (Nominal 3.7V / CV 4.2V)", "LFP (Nominal 3.2V / CV 3.65V)"])
     batt_s = c3.number_input(t("직렬 셀 (S)", "Series Cells (S)"), min_value=1, value=13)
     
-    v_nom = 3.2 if "LFP" in batt_t else 3.7
-    v_charge = 3.65 if "LFP" in batt_t else 4.2
+    v_nom = 3.2 if "LFP" in batt_t else 3.7; v_charge = 3.65 if "LFP" in batt_t else 4.2
     batt_vol_nom = v_nom * batt_s; batt_vol_charge = v_charge * batt_s
-    
     st.info(t(f"🔋 **배터리 팩 분석:** 공칭 전압은 **{batt_vol_nom:.1f}V** 이며, 최대 충전(CV) 전압은 **{batt_vol_charge:.1f}V** 입니다. WPT 설계는 최대 충전 전압을 타겟($V_{{out}}$)으로 진행됩니다.", 
               f"🔋 **Battery Pack:** Nominal **{batt_vol_nom:.1f}V**, Max CV **{batt_vol_charge:.1f}V**. Design target is max CV."))
     
     st.divider()
     st.markdown(t("📐 **가용 공간 및 무게 제약**", "📐 **Space & Weight Constraints**"))
-    # 가로, 세로, 높이 입력으로 UI 변경
     tx_c1, tx_c2, tx_c3 = st.columns(3)
     tx_w = tx_c1.number_input(t("Tx 코일 가로 (mm)", "Tx Width (mm)"), value=200)
     tx_l = tx_c2.number_input(t("Tx 코일 세로 (mm)", "Tx Length (mm)"), value=200)
     tx_h = tx_c3.number_input(t("Tx 가용 두께 (mm)", "Tx Height (mm)"), value=10)
-    
     rx_c1, rx_c2, rx_c3 = st.columns(3)
     rx_w = rx_c1.number_input(t("Rx 코일 가로 (mm)", "Rx Width (mm)"), value=150)
     rx_l = rx_c2.number_input(t("Rx 코일 세로 (mm)", "Rx Length (mm)"), value=150)
     rx_h = rx_c3.number_input(t("Rx 가용 두께 (mm)", "Rx Height (mm)"), value=8)
-    
     o1, o2 = st.columns(2)
     rx_weight = o1.number_input(t("Rx 무게 제약 (g)", "Rx Weight Limit (g)"), value=400)
     gap = o2.number_input(t("이격 거리 (Air Gap, mm)", "Air Gap (mm)"), value=50)
@@ -287,16 +258,12 @@ elif st.session_state.step == 1:
     n1, n2, n3 = st.columns([1, 1, 2])
     n1.button(t("⬅️ 홈으로", "⬅️ Home"), on_click=reset_project)
     if n3.button(t("제약 조건 확정 및 분석 시작 ➔", "Confirm & Start Analysis ➔"), use_container_width=True, type="primary"):
-        st.session_state.project_data = {
-            "app_type": app_type, "battery_vol_charge": batt_vol_charge, "battery_vol_nom": batt_vol_nom, 
-            "target_power": target_p, "rx_weight": rx_weight, "air_gap": gap, 
-            "tx_size": f"{tx_w}x{tx_l}x{tx_h}", "rx_size": f"{rx_w}x{rx_l}x{rx_h}", "battery_info": f"{batt_s}S {batt_t[:6]}"
-        }
+        st.session_state.project_data = {"app_type": app_type, "battery_vol_charge": batt_vol_charge, "battery_vol_nom": batt_vol_nom, "target_power": target_p, "rx_weight": rx_weight, "air_gap": gap, "tx_size": f"{tx_w}x{tx_l}x{tx_h}", "rx_size": f"{rx_w}x{rx_l}x{rx_h}", "battery_info": f"{batt_s}S {batt_t[:6]}"}
         go_to_step(2); st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
-# [Phase 2] AI 추천 (Bilingual JSON & Table)
+# [Phase 2] AI 추천 (Language Aware & Coil Reasoning)
 # ==========================================
 elif st.session_state.step == 2:
     st.header(t("Step 2. AI 엔지니어 종합 설계 제안", "Step 2. AI Engineer Design Proposal"))
@@ -306,16 +273,14 @@ elif st.session_state.step == 2:
     else:
         sd = st.session_state.project_data
         if st.session_state.llm_result is None:
-            with st.status(t("🧠 AI 수석 엔지니어 분석 중 (최대 2분 소요될 수 있습니다)...", "🧠 AI Analyzing (may take up to 120s)..."), expanded=True) as status:
+            with st.status(t("🧠 AI 수석 엔지니어 분석 중 (최대 1분 소요될 수 있습니다)...", "🧠 AI Analyzing (may take up to 60s)..."), expanded=True) as status:
                 for attempt in range(3):
                     try:
                         model = genai.GenerativeModel(selected_model)
                         prompt = f"""
                         You are an expert WPT Engineer. Analyze:
                         App: {sd['app_type']}, Power: {sd['target_power']}W, Vout: {sd['battery_vol_charge']}V, RxWeight: {sd['rx_weight']}g, AirGap: {sd['air_gap']}mm, TxSize: {sd['tx_size']}, RxSize: {sd['rx_size']}.
-                        
-                        Based on real-world WPT design papers, provide practical recommendations for Ltx, Lrx, and k.
-                        Respond ONLY in a flat JSON format. Generate the text fields in BOTH Korean (_kr) and English (_en).
+                        Respond ONLY in a flat JSON format. Generate text fields in BOTH Korean (_kr) and English (_en).
                         {{
                             "topology": "Choose ONE: SS, SP, LCC-S, Double LCC",
                             "reasoning_kr": "Explain why this topology is best in Korean.",
@@ -325,13 +290,15 @@ elif st.session_state.step == 2:
                             "recommended_ltx": <float representing Tx inductance in uH>,
                             "recommended_lrx": <float representing Rx inductance in uH>,
                             "recommended_k": <float between 0.05 and 0.5>,
-                            "coil_design_kr": "Recommend a coil shape (Circular, DD, etc) in Korean.",
+                            "coil_reasoning_kr": "Explain clearly in Korean WHY these specific Ltx, Lrx, and k values are recommended based on the constraints.",
+                            "coil_reasoning_en": "Explain clearly in English WHY these specific Ltx, Lrx, and k values are recommended.",
+                            "coil_design_kr": "Recommend a coil shape (Circular, DD) in Korean.",
                             "coil_design_en": "Recommend a coil shape in English.",
                             "shielding_guide_kr": "Advice on ferrite core and shielding in Korean.",
                             "shielding_guide_en": "Advice on ferrite core and shielding in English."
                         }}
                         """
-                        resp = model.generate_content(prompt, request_options={"timeout": 120.0})
+                        resp = model.generate_content(prompt, request_options={"timeout": 60.0})
                         match = re.search(r'\{.*\}', resp.text, re.DOTALL)
                         if match:
                             st.session_state.llm_result = json.loads(match.group(0))
@@ -348,22 +315,29 @@ elif st.session_state.step == 2:
                             st.session_state.llm_result = {
                                 "topology": topo, 
                                 "reasoning_kr": "API 지연 또는 오류로 내부 알고리즘이 선정했습니다.",
-                                "reasoning_en": "Selected by internal fallback algorithm due to API delay or error.",
+                                "reasoning_en": "Selected by internal fallback algorithm due to API delay.",
                                 "recommended_vin": 100, "recommended_f0": 85, 
                                 "recommended_ltx": cp["Ltx"], "recommended_lrx": cp["Lrx"], "recommended_k": cp["k"],
-                                "coil_design_kr": "원형(Circular) 코일 추천.",
-                                "coil_design_en": "Circular coil recommended.",
-                                "shielding_guide_kr": "얇은 페라이트 시트 사용 권장.",
-                                "shielding_guide_en": "Thin ferrite sheet recommended."
+                                "coil_reasoning_kr": f"이격 거리({sd['air_gap']}mm)와 무게({sd['rx_weight']}g) 제약을 고려하여 도출된 경험적 추천값입니다.",
+                                "coil_reasoning_en": f"Empirical values derived based on the {sd['air_gap']}mm gap and {sd['rx_weight']}g weight limit.",
+                                "coil_design_kr": "원형(Circular) 코일 추천.", "coil_design_en": "Circular coil recommended.",
+                                "shielding_guide_kr": "얇은 페라이트 시트 사용 권장.", "shielding_guide_en": "Thin ferrite sheet recommended."
                             }
                 status.update(label=t("✅ 분석 완료", "✅ Analysis Complete"), state="complete")
         
         res = st.session_state.llm_result
         st.markdown('<div class="card-container">', unsafe_allow_html=True)
         st.subheader(t(f"✅ AI 수석 엔지니어 추천: **{res['topology']}** 토폴로지", f"✅ AI Recommendation: **{res['topology']}** Topology"))
-        
-        # 언어 스위치에 따라 즉각적으로 한글/영어 JSON 키값을 매칭하여 출력
         st.info(f"**💡 {t('추천 사유', 'Reasoning')}:** {t(res['reasoning_kr'], res['reasoning_en'])}")
+        
+        st.divider()
+        st.markdown(t("🎯 **AI 코일 파라미터 맞춤 추천**", "🎯 **AI Coil Parameter Recommendation**"))
+        p1, p2, p3 = st.columns(3)
+        p1.metric(t("추천 송신 코일 (Ltx)", "Rec. Tx Coil (Ltx)"), f"{res['recommended_ltx']} uH")
+        p2.metric(t("추천 수신 코일 (Lrx)", "Rec. Rx Coil (Lrx)"), f"{res['recommended_lrx']} uH")
+        p3.metric(t("추천 결합 계수 (k)", "Rec. Coupling (k)"), f"{res['recommended_k']}")
+        st.success(f"**🤖 {t('파라미터 추천 사유', 'Parameter Reasoning')}:** {t(res['coil_reasoning_kr'], res['coil_reasoning_en'])}")
+
         st.divider()
         c1, c2 = st.columns(2)
         c1.markdown(f"**🧲 {t('코일 형상 가이드', 'Coil Design Guide')}:**<br>{t(res['coil_design_kr'], res['coil_design_en'])}", unsafe_allow_html=True)
@@ -400,15 +374,15 @@ elif st.session_state.step == 2:
             go_to_step(next_step); st.rerun()
 
 # ==========================================
-# [Phase 3] 상세 튜닝 (Expert)
+# [Phase 3] 상세 튜닝 & AI 챗봇 (Expert)
 # ==========================================
 elif st.session_state.step == 3:
-    st.header(t("Step 3. 파라미터 상세 튜닝 (Expert)", "Step 3. Detailed Parameter Tuning (Expert)"))
+    st.header(t("Step 3. 파라미터 상세 튜닝 & AI 코디네이터", "Step 3. Detailed Parameter Tuning & AI Coordinator"))
     td = st.session_state.tuning_data; sd = st.session_state.project_data
     
-    st.markdown('<div class="card-container">', unsafe_allow_html=True)
     col1, col2 = st.columns([1.2, 1.8])
     with col1:
+        st.markdown('<div class="card-container">', unsafe_allow_html=True)
         st.subheader(t("🛠️ 설계 파라미터 조작", "🛠️ Adjust Parameters"))
         topo_sel = st.selectbox(t("토폴로지", "Topology"), ["SS", "SP", "LCC-S", "Double LCC"], index=["SS", "SP", "LCC-S", "Double LCC"].index(td['topology']))
         safe_ltx = min(max(float(td['Ltx']), 10.0), 1000.0)
@@ -420,9 +394,11 @@ elif st.session_state.step == 3:
         vin = st.number_input(t("입력 전압 Vin (V)", "Input Voltage Vin (V)"), value=td['Vin'])
         f0 = st.number_input(t("주파수 f0 (kHz)", "Frequency f0 (kHz)"), value=td['f0']/1000) * 1000
         ratio = st.slider(t("전류 비율 (Itx/Irx)", "Current Ratio (Itx/Irx)"), 0.5, 3.0, 1.5) if "Double" in topo_sel else 1.0
-        
+        st.markdown('</div>', unsafe_allow_html=True)
+
     with col2:
-        st.subheader(t("⚡ 실시간 설계 프리뷰 & 코칭", "⚡ Real-time Preview & Coaching"))
+        st.markdown('<div class="card-container">', unsafe_allow_html=True)
+        st.subheader(t("⚡ 실시간 설계 프리뷰", "⚡ Real-time Preview"))
         if topo_sel == "SS": res = calculate_ss(vin, sd['battery_vol_charge'], sd['target_power'], f0, Ltx*1e-6, Lrx*1e-6, k, 0.085, 0.074)
         elif topo_sel == "SP": res = calculate_sp(vin, sd['battery_vol_charge'], sd['target_power'], f0, Ltx*1e-6, Lrx*1e-6, k, 0.085, 0.074)
         elif topo_sel == "LCC-S": res = calculate_lccs(vin, sd['battery_vol_charge'], sd['target_power'], f0, Ltx*1e-6, Lrx*1e-6, k, 0.085, 0.074)
@@ -441,13 +417,50 @@ elif st.session_state.step == 3:
             p6.metric(t("실제 설계 전력", "Actual Power"), f"{res['Pout_actual']:.1f} W")
 
             st.divider()
-            st.markdown(t("**🔹 공진 커패시터 및 인덕터**", "**🔹 Resonant Caps & Inductors**"))
             cap_cols = st.columns(len(res['caps']) + (1 if topo_sel == 'LCC-S' else (2 if 'Double' in topo_sel else 0)))
             idx = 0
             for name, data in res['caps'].items(): cap_cols[idx].metric(name, f"{data['val']*1e9:.2f} nF"); idx += 1
             if topo_sel == "LCC-S": cap_cols[idx].metric("Ls", f"{res['Ls']*1e6:.1f} uH")
             elif 'Double' in topo_sel: cap_cols[idx].metric("Llcc_tx", f"{res['Llcc_tx']*1e6:.1f} uH"); cap_cols[idx+1].metric("Llcc_rx", f"{res['Llcc_rx']*1e6:.1f} uH")
-            st.markdown(f"<div class='ai-coach'>💡 <b>AI Coaching</b><br>{generate_ai_coaching(res)}</div>", unsafe_allow_html=True)
+            
+            st.markdown(f"<div class='ai-coach'>💡 <b>{t('자동 분석 코칭', 'Auto Coaching')}</b><br>{generate_ai_coaching(res)}</div>", unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+    # AI Context-Aware 챗봇 컨테이너
+    st.markdown('<div class="card-container">', unsafe_allow_html=True)
+    st.subheader(t("💬 실시간 AI 설계 도우미 (Context-Aware Chatbot)", "💬 Context-Aware AI Design Assistant"))
+    st.caption(t("현재 슬라이더 조작 상태와 계산 결과를 AI가 모두 알고 있습니다. 효율을 올리는 방법이나 발열 해결책을 자유롭게 물어보세요!", "AI knows your current slider settings and results. Ask how to improve efficiency or solve heating issues!"))
+    
+    for message in st.session_state.chat_history:
+        with st.chat_message(message["role"]): st.markdown(message["content"])
+
+    if user_input := st.chat_input(t("예: 지금 효율이 82%인데, 90%로 올리려면 슬라이더를 어떻게 조작해야 해?", "e.g., How can I increase efficiency to 90% with sliders?")):
+        st.session_state.chat_history.append({"role": "user", "content": user_input})
+        with st.chat_message("user"): st.markdown(user_input)
+        
+        with st.chat_message("assistant"):
+            if not api_key: st.error(t("사이드바에 API Key를 입력하세요.", "Please enter API Key."))
+            else:
+                with st.spinner(t("AI가 현재 파라미터를 분석하여 답변을 생성 중입니다...", "AI is analyzing current parameters...")):
+                    try:
+                        context = f"""
+                        [Current System State]
+                        Topology: {topo_sel}, Target Power: {sd['target_power']}W, Battery(CV): {sd['battery_vol_charge']}V
+                        Current Sliders -> Vin: {vin}V, f0: {f0/1000}kHz, Ltx: {Ltx}uH, Lrx: {Lrx}uH, k: {k}
+                        Calculated Results -> Efficiency: {res.get('efficiency', 0):.1f}%, Itx: {res.get('Itx', 0):.2f}A, Irx: {res.get('Irx', 0):.2f}A
+                        
+                        As an expert WPT engineer, answer the user's question directly based on the [Current System State].
+                        Give ACTIONABLE advice referring to specific slider adjustments (e.g., "Increase Vin slider to 150V", "Decrease Ltx to 100uH").
+                        Respond entirely in {"Korean" if st.session_state.lang == 'KR' else "English"}.
+                        User Question: {user_input}
+                        """
+                        model = genai.GenerativeModel(selected_model)
+                        resp = model.generate_content(context)
+                        st.markdown(resp.text)
+                        st.session_state.chat_history.append({"role": "assistant", "content": resp.text})
+                    except Exception as e:
+                        st.error(f"Chat Error: {str(e)}")
+    st.markdown('</div>', unsafe_allow_html=True)
             
     st.write("<br>", unsafe_allow_html=True)
     n1, n2, n3 = st.columns([1, 1, 2])
@@ -458,7 +471,6 @@ elif st.session_state.step == 3:
         else:
             st.session_state.tuning_data.update({"topology": topo_sel, "Ltx": Ltx, "Lrx": Lrx, "k": k, "Vin": vin, "f0": f0, "ratio": ratio})
             go_to_step(4); st.rerun()
-    st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
 # [Phase 4] 통합 설계 리포트 
@@ -477,7 +489,6 @@ elif st.session_state.step == 4:
         st.button(t("⬅️ Step 3로 돌아가기", "⬅️ Back to Step 3"), on_click=go_to_step, args=(3,))
         st.stop()
 
-    # [Section 1]
     st.markdown('<div class="card-container">', unsafe_allow_html=True)
     st.subheader(t("⚡ 시스템 성능 및 입출력 (System & Output)", "⚡ System Performance & I/O"))
     s1, s2, s3, s4 = st.columns(4)
@@ -485,7 +496,6 @@ elif st.session_state.step == 4:
     s2.metric("V_charge", f"{res['Vout']:.1f} V")
     s3.metric("f0", f"{td['f0']/1000:.1f} kHz")
     s4.metric("Efficiency", f"{res['efficiency']:.1f} %")
-    
     s5, s6, s7, s8 = st.columns(4)
     s5.metric("Topology", td['topology'])
     s6.metric("R_Leq", f"{res['RLeq']:.2f} Ω")
@@ -493,7 +503,6 @@ elif st.session_state.step == 4:
     s8.metric("Iout", f"{res['Iout']:.2f} A")
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # [Section 2]
     st.markdown('<div class="card-container">', unsafe_allow_html=True)
     st.subheader(t("🧲 코일 & 공진 네트워크 (Resonators)", "🧲 Coils & Resonant Network"))
     c1, c2, c3, c4 = st.columns(4)
@@ -501,11 +510,9 @@ elif st.session_state.step == 4:
     c2.metric("Lrx", f"{td['Lrx']:.1f} uH")
     c3.metric("k", f"{td['k']:.3f}")
     c4.metric("M", f"{res['M']*1e6:.1f} uH")
-    
     c5, c6 = st.columns(2)
     c5.metric("Itx_rms", f"{res['Itx']:.2f} A")
     c6.metric("Irx_rms", f"{res['Irx']:.2f} A")
-    
     st.divider()
     cap_cols = st.columns(len(res['caps']) + (1 if td['topology'] == 'LCC-S' else (2 if 'Double' in td['topology'] else 0)))
     idx = 0
@@ -514,7 +521,6 @@ elif st.session_state.step == 4:
     elif 'Double' in td['topology']: cap_cols[idx].metric("Llcc_tx", f"{res['Llcc_tx']*1e6:.1f} uH"); cap_cols[idx+1].metric("Llcc_rx", f"{res['Llcc_rx']*1e6:.1f} uH")
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # [Section 3]
     st.markdown('<div class="card-container">', unsafe_allow_html=True)
     st.subheader(t("🧵 리쯔와이어 계산기 (Litz Wire Sizing)", "🧵 Litz Wire Calculator"))
     req_tx_sq = res['Itx'] / 7.0; req_rx_sq = res['Irx'] / 7.0
@@ -531,30 +537,21 @@ elif st.session_state.step == 4:
     # [Section 4] 주파수 응답 시뮬레이션
     st.markdown('<div class="card-container">', unsafe_allow_html=True)
     st.subheader(t("📈 주파수 응답 시뮬레이션 (Frequency Response)", "📈 Frequency Response Simulation"))
-    
-    # 1. 데이터를 먼저 생성하여 최대/최소 효율 파악
     df_f = simulate_frequency_response(td['topology'], res, td['f0'], td['Ltx']*1e-6, td['Lrx']*1e-6, res['M'], 0.085, 0.074)
-    
-    # 2. 그래프 형태가 잘 보이도록 초기 Y축 자동 스케일링 (최대 효율 기준 -15% ~ +5%)
     eff_max = df_f['Efficiency (%)'].max()
     default_ymax = min(100.0, math.ceil(eff_max + 5.0))
     default_ymin = max(0.0, math.floor(eff_max - 15.0))
     
-    # 3. 슬라이더 대신 숫자 입력창(number_input) 배치
     col_min, col_max = st.columns(2)
     y_min = col_min.number_input(t("그래프 Y축 최소값 (%)", "Y-Axis Min (%)"), min_value=0.0, max_value=100.0, value=float(default_ymin), step=1.0)
     y_max = col_max.number_input(t("그래프 Y축 최대값 (%)", "Y-Axis Max (%)"), min_value=0.0, max_value=100.0, value=float(default_ymax), step=1.0)
-    
-    if y_min >= y_max:  # 에러 방지용
-        y_max = min(100.0, y_min + 1.0)
+    if y_min >= y_max: y_max = min(100.0, y_min + 1.0)
 
-    # 4. 차트 렌더링
     chart = alt.Chart(df_f).mark_line(color='#0A84FF').encode(
         x=alt.X('Frequency (kHz)', scale=alt.Scale(zero=False)),
         y=alt.Y('Efficiency (%)', scale=alt.Scale(domain=[y_min, y_max], clamp=True)),
         tooltip=['Frequency (kHz)', 'Efficiency (%)', 'Output Power (W)']
     ).interactive()
-    
     st.altair_chart(chart, use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
     
