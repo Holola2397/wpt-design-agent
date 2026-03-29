@@ -294,7 +294,10 @@ elif st.session_state.step == 2:
                     response = model.generate_content(prompt)
                     raw_text = response.text.replace('```json', '').replace('```', '').strip()
                     st.session_state.llm_result = json.loads(raw_text)
-                except Exception as e:
+               except Exception as e:
+                    # [추가됨] 실제 에러 메시지를 화면에 붉은색으로 띄워줍니다.
+                    st.error(f"🚨 구글 API 통신 에러 상세 내용: {e}")
+                    
                     # API 오류 시 Fallback 로직 작동
                     st.warning("⚠️ API 연동 지연으로 자체 휴리스틱 알고리즘을 가동합니다.")
                     topo = "LCC-S (수신부 초경량화)" if saved_data['rx_weight'] <= 500 else "Double LCC (고효율/CC충전)"
