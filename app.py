@@ -258,7 +258,8 @@ elif st.session_state.step == 1:
     batt_vol_nom = v_nom * batt_s
     batt_vol_charge = v_charge * batt_s
     
-    st.info(f"🔋 **배터리 팩 분석:** 공칭 전압은 **{batt_vol_nom:.1f}V** 이며, 최대 충전(CV) 전압은 **{batt_vol_charge:.1f}V** 입니다. WPT 설계는 최대 충전 전압을 타겟($V_{out}$)으로 진행됩니다.")
+    # 중괄호 에러 수정한 부분 ({{out}} 으로 변경)
+    st.info(f"🔋 **배터리 팩 분석:** 공칭 전압은 **{batt_vol_nom:.1f}V** 이며, 최대 충전(CV) 전압은 **{batt_vol_charge:.1f}V** 입니다. WPT 설계는 최대 충전 전압을 타겟($V_{{out}}$)으로 진행됩니다.")
     
     st.divider()
     s1, s2, s3 = st.columns(3)
