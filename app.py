@@ -5,6 +5,7 @@ import pandas as pd
 import altair as alt
 import google.generativeai as genai
 import json
+import time
 
 # ==========================================
 # [System Setup & Custom CSS]
@@ -30,6 +31,7 @@ st.markdown("""
     .cap-table { width: 100%; text-align: center; border-collapse: collapse; margin-top: 10px; }
     .cap-table th, .cap-table td { border: 1px solid var(--border-color); padding: 8px; }
     .cap-table th { background-color: rgba(128, 128, 128, 0.1); }
+    .ai-coach { background-color: rgba(10, 132, 255, 0.1); border-left: 4px solid #0A84FF; padding: 15px; border-radius: 8px; margin-top: 15px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -51,7 +53,7 @@ def reset_project():
     st.session_state.tuning_data = {}
 
 # ==========================================
-# [Math Engine] 핵심 설계 수식 모듈 
+# [Math Engine] WPT 파라미터 계산 
 # ==========================================
 def estimate_coil_params(M_req, air_gap_mm, rx_weight_g):
     k_est = max(0.05, 0.4 * math.exp(-air_gap_mm / 60.0))
@@ -63,33 +65,32 @@ def estimate_coil_params(M_req, air_gap_mm, rx_weight_g):
         Lrx_target = ((M_req * 1e-6) / k_est)**2 / Ltx_req
     return {"k": round(k_est, 3), "Lrx": round(Lrx_target, 1), "Ltx": round(Ltx_req * 1e6, 1)}
 
-def calculate_ss(Vin, Vout, Ptarget, f0, Ltx, Lrx, k, Rtx, Rrx):
+def calculate_ss(Vin, Vout_cv, Ptarget, f0, Ltx, Lrx, k, Rtx, Rrx):
     try:
         w = 2 * math.pi * f0
         Vin_ac_rms = 2 * math.sqrt(2) / math.pi * Vin
-        RL = Vout**2 / Ptarget
+        RL = Vout_cv**2 / Ptarget
         RLeq = RL * 8 / (math.pi**2)
         M = k * math.sqrt(Ltx * Lrx)
         Z_refl = (w * M)**2 / (Rrx + RLeq)
         Itx = Vin_ac_rms / (Rtx + Z_refl)
         Irx = (w * M * Itx) / (Rrx + RLeq)
         Pout_actual = (Irx**2) * RLeq
-        Iout = Pout_actual / Vout
+        Iout = Pout_actual / Vout_cv
         Ctx = 1 / (w**2 * Ltx)
         Crx = 1 / (w**2 * Lrx)
         P_loss_tx = (Itx**2) * Rtx; P_loss_rx = (Irx**2) * Rrx
         eff = (Pout_actual / (Pout_actual + P_loss_tx + P_loss_rx)) * 100
         
-        caps = {"Tx 직렬 (Ctx)": {"val": Ctx, "form": r"C_{tx} = \frac{1}{\omega^2 L_{tx}}"}, 
-                "Rx 직렬 (Crx)": {"val": Crx, "form": r"C_{rx} = \frac{1}{\omega^2 L_{rx}}"}}
-        return {"Itx": Itx, "Irx": Irx, "Iout": Iout, "Vout": Vout, "M": M, "efficiency": eff, "Vin_ac": Vin_ac_rms, "RLeq": RLeq, "Pout_actual": Pout_actual, "Ctx": Ctx, "Crx": Crx, "caps": caps}
+        caps = {"Tx 직렬 (Ctx)": {"val": Ctx, "form": r"C_{tx} = \frac{1}{\omega^2 L_{tx}}"}, "Rx 직렬 (Crx)": {"val": Crx, "form": r"C_{rx} = \frac{1}{\omega^2 L_{rx}}"}}
+        return {"Itx": Itx, "Irx": Irx, "Iout": Iout, "Vout": Vout_cv, "M": M, "efficiency": eff, "Vin_ac": Vin_ac_rms, "RLeq": RLeq, "Pout_actual": Pout_actual, "Ctx": Ctx, "Crx": Crx, "caps": caps, "P_loss_tx": P_loss_tx, "P_loss_rx": P_loss_rx}
     except Exception as e: return {"error": f"SS 계산 오류: {str(e)}"}
 
-def calculate_sp(Vin, Vout, Ptarget, f0, Ltx, Lrx, k, Rtx, Rrx):
+def calculate_sp(Vin, Vout_cv, Ptarget, f0, Ltx, Lrx, k, Rtx, Rrx):
     try:
         w = 2 * math.pi * f0
         Vin_ac_rms = 2 * math.sqrt(2) / math.pi * Vin
-        RL = Vout**2 / Ptarget
+        RL = Vout_cv**2 / Ptarget
         RLeq = RL * (math.pi**2) / 8
         M = k * math.sqrt(Ltx * Lrx)
         Crx = 1 / (w**2 * Lrx)
@@ -103,70 +104,61 @@ def calculate_sp(Vin, Vout, Ptarget, f0, Ltx, Lrx, k, Rtx, Rrx):
         Vrx_p = Irx_coil * abs(complex(Req_s, Xeq_s))
         Irx_out = Vrx_p / RLeq
         Pout_actual = (Vrx_p**2) / RLeq
-        Iout = Pout_actual / Vout
+        Iout = Pout_actual / Vout_cv
         P_loss_tx = (Itx**2) * Rtx; P_loss_rx = (Irx_coil**2) * Rrx
         eff = (Pout_actual / (Pout_actual + P_loss_tx + P_loss_rx)) * 100
         
-        caps = {"Tx 직렬 (Ctx)": {"val": Ctx, "form": r"C_{tx} = \frac{1}{\omega (\omega L_{tx} + Im(Z_{refl}))}"}, 
-                "Rx 병렬 (Crx)": {"val": Crx, "form": r"C_{rx} = \frac{1}{\omega^2 L_{rx}}"}}
-        return {"Itx": Itx, "Irx": Irx_coil, "Iout": Iout, "Vout": Vout, "M": M, "efficiency": eff, "Vin_ac": Vin_ac_rms, "RLeq": RLeq, "Pout_actual": Pout_actual, "Ctx": Ctx, "Crx": Crx, "caps": caps}
+        caps = {"Tx 직렬 (Ctx)": {"val": Ctx, "form": r"C_{tx} = \frac{1}{\omega (\omega L_{tx} + Im(Z_{refl}))}"}, "Rx 병렬 (Crx)": {"val": Crx, "form": r"C_{rx} = \frac{1}{\omega^2 L_{rx}}"}}
+        return {"Itx": Itx, "Irx": Irx_coil, "Iout": Iout, "Vout": Vout_cv, "M": M, "efficiency": eff, "Vin_ac": Vin_ac_rms, "RLeq": RLeq, "Pout_actual": Pout_actual, "Ctx": Ctx, "Crx": Crx, "caps": caps, "P_loss_tx": P_loss_tx, "P_loss_rx": P_loss_rx}
     except Exception as e: return {"error": f"SP 계산 오류: {str(e)}"}
 
-def calculate_lccs(Vin, Vout, Pout, f0, Ltx, Lrx, k, Rtx, Rrx):
+def calculate_lccs(Vin, Vout_cv, Pout, f0, Ltx, Lrx, k, Rtx, Rrx):
     try:
         w = 2 * math.pi * f0
         Vin_ac_rms = 2 * math.sqrt(2) / math.pi * Vin
-        Iout = Pout / Vout
-        RL = Vout / Iout
+        Iout = Pout / Vout_cv
+        RL = Vout_cv / Iout
         RLeq = RL * (math.pi**2) / 8
-        Vrect_in = Vout * math.pi / (2 * math.sqrt(2))
+        Vrect_in = Vout_cv * math.pi / (2 * math.sqrt(2))
         Iout_ac = Iout * (2 * math.sqrt(2)) / math.pi
         M = k * math.sqrt(Ltx * Lrx)
         Itx = Vrect_in / (w * M)
         Irx = Iout_ac
         Ls = Vin_ac_rms / (w * Itx)
-        if Ls >= Ltx: return {"error": "Ls > Ltx (보상 불가: Ltx를 키우거나 k를 높이세요)"}
-        Cp = 1 / (w**2 * Ls)
-        Cs = 1 / (w**2 * (Ltx - Ls))
-        Crx = 1 / (w**2 * Lrx)
+        if Ls >= Ltx: return {"error": "Ls > Ltx (보상 불가: 입력전압(Vin)을 낮추거나 Ltx를 키우세요)"}
+        Cp = 1 / (w**2 * Ls); Cs = 1 / (w**2 * (Ltx - Ls)); Crx = 1 / (w**2 * Lrx)
         P_out_ac = (Irx**2) * RLeq
         P_loss_tx = (Itx**2) * Rtx; P_loss_rx = (Irx**2) * Rrx
         eff = (P_out_ac / (P_out_ac + P_loss_tx + P_loss_rx)) * 100
         
-        caps = {"Tx 병렬 (Cp)": {"val": Cp, "form": r"C_p = \frac{1}{\omega^2 L_s}"}, 
-                "Tx 직렬 (Cs)": {"val": Cs, "form": r"C_s = \frac{1}{\omega^2 (L_{tx} - L_s)}"}, 
-                "Rx 직렬 (Crx)": {"val": Crx, "form": r"C_{rx} = \frac{1}{\omega^2 L_{rx}}"}}
-        return {"Itx": Itx, "Irx": Irx, "Iout": Iout, "Vout": Vout, "M": M, "Ls": Ls, "Cp": Cp, "Cs": Cs, "Crx": Crx, "efficiency": eff, "Vin_ac": Vin_ac_rms, "RLeq": RLeq, "Pout_actual": Pout, "caps": caps}
+        caps = {"Tx 병렬 (Cp)": {"val": Cp, "form": r"C_p = \frac{1}{\omega^2 L_s}"}, "Tx 직렬 (Cs)": {"val": Cs, "form": r"C_s = \frac{1}{\omega^2 (L_{tx} - L_s)}"}, "Rx 직렬 (Crx)": {"val": Crx, "form": r"C_{rx} = \frac{1}{\omega^2 L_{rx}}"}}
+        return {"Itx": Itx, "Irx": Irx, "Iout": Iout, "Vout": Vout_cv, "M": M, "Ls": Ls, "Cp": Cp, "Cs": Cs, "Crx": Crx, "efficiency": eff, "Vin_ac": Vin_ac_rms, "RLeq": RLeq, "Pout_actual": Pout, "caps": caps, "P_loss_tx": P_loss_tx, "P_loss_rx": P_loss_rx}
     except Exception as e: return {"error": f"LCC-S 계산 오류: {str(e)}"}
 
-def calculate_double_lcc(Vin, Vout, Pout, f0, Ltx, Lrx, k, current_ratio, Rtx, Rrx):
+def calculate_double_lcc(Vin, Vout_cv, Pout, f0, Ltx, Lrx, k, current_ratio, Rtx, Rrx):
     try:
         w = 2 * math.pi * f0
         Vin_ac_rms = 2 * math.sqrt(2) / math.pi * Vin
-        Iout = Pout / Vout
-        RL = Vout / Iout
+        Iout = Pout / Vout_cv
+        RL = Vout_cv / Iout
         RLeq = RL * 8 / (math.pi**2)
-        Vrect_in = 2 * math.sqrt(2) / math.pi * Vout
+        Vrect_in = 2 * math.sqrt(2) / math.pi * Vout_cv
         Iout_ac = Iout * math.sqrt(2) * math.pi / 4
         M = k * math.sqrt(Ltx * Lrx)
         L_prod = (M * Vin_ac_rms) / (w * Iout_ac)
         L_rat = current_ratio * (Vrect_in / Vin_ac_rms)
-        Llcc_tx = math.sqrt(L_prod / L_rat)
-        Llcc_rx = math.sqrt(L_prod * L_rat)
+        Llcc_tx = math.sqrt(L_prod / L_rat); Llcc_rx = math.sqrt(L_prod * L_rat)
         if Llcc_tx >= Ltx or Llcc_rx >= Lrx: return {"error": "Llcc > Ltx/Lrx (설계불가: 코일 인덕턴스 부족)"}
         Clcc_tx = 1 / (w**2 * Llcc_tx); Clcc_rx = 1 / (w**2 * Llcc_rx)
         Cp_tx = 1 / (w**2 * (Ltx - Llcc_tx)); Cp_rx = 1 / (w**2 * (Lrx - Llcc_rx))
-        Itx = Vin_ac_rms / (w * Llcc_tx)
-        Irx = Vrect_in / (w * Llcc_rx)
+        Itx = Vin_ac_rms / (w * Llcc_tx); Irx = Vrect_in / (w * Llcc_rx)
         P_out_ac = (Irx**2) * RLeq
         P_loss_tx = (Itx**2) * Rtx; P_loss_rx = (Irx**2) * Rrx
         eff = (P_out_ac / (P_out_ac + P_loss_tx + P_loss_rx)) * 100
         
-        caps = {"Tx 직렬 (Clcc_tx)": {"val": Clcc_tx, "form": r"C_{f,tx} = \frac{1}{\omega^2 L_{f,tx}}"}, 
-                "Tx 병렬 (Cp_tx)": {"val": Cp_tx, "form": r"C_{p,tx} = \frac{1}{\omega^2 (L_{tx} - L_{f,tx})}"}, 
-                "Rx 직렬 (Clcc_rx)": {"val": Clcc_rx, "form": r"C_{f,rx} = \frac{1}{\omega^2 L_{f,rx}}"}, 
-                "Rx 병렬 (Cp_rx)": {"val": Cp_rx, "form": r"C_{p,rx} = \frac{1}{\omega^2 (L_{rx} - L_{f,rx})}"}}
-        return {"Itx": Itx, "Irx": Irx, "Iout": Iout, "Vout": Vout, "M": M, "Llcc_tx": Llcc_tx, "Llcc_rx": Llcc_rx, "efficiency": eff, "Vin_ac": Vin_ac_rms, "RLeq": RLeq, "Pout_actual": Pout, "caps": caps}
+        caps = {"Tx 직렬(Clcc_tx)": {"val": Clcc_tx, "form": r"C_{f,tx} = \frac{1}{\omega^2 L_{f,tx}}"}, "Tx 병렬(Cp_tx)": {"val": Cp_tx, "form": r"C_{p,tx} = \frac{1}{\omega^2 (L_{tx} - L_{f,tx})}"}, 
+                "Rx 직렬(Clcc_rx)": {"val": Clcc_rx, "form": r"C_{f,rx} = \frac{1}{\omega^2 L_{f,rx}}"}, "Rx 병렬(Cp_rx)": {"val": Cp_rx, "form": r"C_{p,rx} = \frac{1}{\omega^2 (L_{rx} - L_{f,rx})}"}}
+        return {"Itx": Itx, "Irx": Irx, "Iout": Iout, "Vout": Vout_cv, "M": M, "Llcc_tx": Llcc_tx, "Llcc_rx": Llcc_rx, "efficiency": eff, "Vin_ac": Vin_ac_rms, "RLeq": RLeq, "Pout_actual": Pout, "caps": caps, "P_loss_tx": P_loss_tx, "P_loss_rx": P_loss_rx}
     except Exception as e: return {"error": f"Double LCC 계산 오류: {str(e)}"}
 
 def simulate_frequency_response(topology, res_dict, f0, Ltx, Lrx, M, Rtx, Rrx):
@@ -195,14 +187,22 @@ def simulate_frequency_response(topology, res_dict, f0, Ltx, Lrx, M, Rtx, Rrx):
             I_tx = ((Vin_ac / (1j*w_arr*Ls + Z_p)) * Z_p) / Z_tx_branch
             I_rx = (1j * w_arr * M * I_tx) / Z_rx
             P_out_arr = (np.abs(I_rx)**2) * RLeq
-        else: # Double LCC
-            P_out_arr = np.full_like(f_arr, res_dict['Pout_actual']) # 단순화를 위해 고정 출력 반환 (전체 시뮬 복잡도 방지)
+        else:
+            P_out_arr = np.full_like(f_arr, res_dict['Pout_actual'])
             
-        P_in_arr = P_out_arr / (res_dict['efficiency']/100) # 근사 효율 곡선
+        P_in_arr = P_out_arr / (res_dict['efficiency']/100)
         eff_arr = np.where(P_in_arr > 0, (P_out_arr / P_in_arr) * 100, np.nan)
     except:
         P_out_arr, eff_arr = np.zeros_like(f_arr), np.zeros_like(f_arr)
     return pd.DataFrame({"Frequency (kHz)": f_arr / 1000, "Output Power (W)": P_out_arr, "Efficiency (%)": eff_arr})
+
+def generate_ai_coaching(res):
+    advice = []
+    if res['Itx'] > 15.0: advice.append(f"🔥 **Tx 발열 경고:** 송신 전류({res['Itx']:.1f}A)가 매우 높습니다. 동박 손실(Copper Loss)이 {res['P_loss_tx']:.1f}W 예상되므로 쿨링팬이 필수적이며, Vin을 높이거나 Ltx를 키워 Itx를 낮추는 것을 권장합니다.")
+    if res['Irx'] > 10.0: advice.append(f"🔥 **Rx 발열 경고:** 수신 전류({res['Irx']:.1f}A)가 높아 수신부 발열({res['P_loss_rx']:.1f}W 예상)이 우려됩니다. 출력 전압이 낮다면 배터리 직렬(S) 수를 늘리는 설계 변경을 고려하세요.")
+    if res['efficiency'] < 85.0: advice.append("📉 **효율 저하:** 현재 예상 효율이 85% 미만입니다. 결합계수(k)를 높이기 위해 코일 크기를 키우거나 이격 거리를 줄여보세요.")
+    if not advice: advice.append("✅ **설계 양호:** 코일 전류 및 손실, 효율이 안정적인 범위 내에 있습니다.")
+    return "<br>".join(advice)
 
 # ==========================================
 # [Sidebar] API & Model Selection
@@ -225,9 +225,8 @@ if st.session_state.step > 0:
     st.progress(st.session_state.step / 5.0, text=f"Step {st.session_state.step} / 5 진행 중...")
 
 # ==========================================
-# [Phases 0 ~ 3: Entry -> Tuning (전문가 모드)] 
+# [Phase 0] Entry
 # ==========================================
-# (기존 코드와 동일하므로, Step 0~3은 축약 없이 그대로 유지합니다.)
 if st.session_state.step == 0:
     st.markdown("<h1 style='text-align: center; font-size: 3rem; margin-top: 50px;'>Intelligent WPT Platform</h1>", unsafe_allow_html=True)
     st.markdown("<p style='text-align: center; opacity: 0.7; font-size: 1.2rem;'>무선충전 시스템 설계의 지능형 파트너</p>", unsafe_allow_html=True)
@@ -240,17 +239,27 @@ if st.session_state.step == 0:
         st.warning("⚙️ **Manual Mode**\n\n전문가용. AI 추천값을 기반으로 정밀 튜닝이 가능합니다.")
         st.button("Manual Mode 시작", use_container_width=True, on_click=lambda: (st.session_state.update({"mode": "Manual", "step": 1})))
 
+# ==========================================
+# [Phase 1] 요구사항 입력
+# ==========================================
 elif st.session_state.step == 1:
     st.header("Step 1. 시스템 요구사항 및 제약 조건")
     st.markdown('<div class="card-container">', unsafe_allow_html=True)
     app_type = st.selectbox("적용 분야", ["드론 (UAV)", "사족보행 로봇", "AGV/AMR", "전기차 (EV)", "모바일/가전"])
+    
     c1, c2, c3 = st.columns(3)
     target_p = c1.number_input("목표 전력 (W)", value=300.0)
-    batt_t = c2.selectbox("배터리 셀", ["Li-ion (3.7V)", "LFP (3.2V)"])
+    batt_t = c2.selectbox("배터리 셀", ["Li-ion (공칭 3.7V / 충전 4.2V)", "LFP (공칭 3.2V / 충전 3.65V)"])
     batt_s = c3.number_input("직렬 셀 (S)", min_value=1, value=13)
-    unit_v = 3.2 if "LFP" in batt_t else 3.7
-    batt_vol = unit_v * batt_s
-    st.metric("배터리 팩 공칭 전압", f"{batt_vol:.1f} V")
+    
+    # 충전 전압(CV) 기반으로 계산 수정
+    v_nom = 3.2 if "LFP" in batt_t else 3.7
+    v_charge = 3.65 if "LFP" in batt_t else 4.2
+    batt_vol_nom = v_nom * batt_s
+    batt_vol_charge = v_charge * batt_s
+    
+    st.info(f"🔋 **배터리 팩 분석:** 공칭 전압은 **{batt_vol_nom:.1f}V** 이며, 최대 충전(CV) 전압은 **{batt_vol_charge:.1f}V** 입니다. WPT 설계는 최대 충전 전압을 타겟($V_{out}$)으로 진행됩니다.")
+    
     st.divider()
     s1, s2, s3 = st.columns(3)
     tx_s = s1.text_input("Tx 가용 면적 (mm)", "200x200")
@@ -262,36 +271,71 @@ elif st.session_state.step == 1:
     n1, n2, n3 = st.columns([1, 1, 2])
     n1.button("⬅️ 홈으로", on_click=reset_project)
     if n3.button("제약 조건 확정 및 분석 시작 ➔", use_container_width=True, type="primary"):
-        st.session_state.project_data = {"app_type": app_type, "battery_vol": batt_vol, "target_power": target_p, "rx_weight": rx_w, "air_gap": gap, "tx_size": tx_s, "rx_size": rx_s, "battery_info": f"{batt_s}S {batt_t}"}
+        st.session_state.project_data = {"app_type": app_type, "battery_vol_charge": batt_vol_charge, "battery_vol_nom": batt_vol_nom, "target_power": target_p, "rx_weight": rx_w, "air_gap": gap, "tx_size": tx_s, "rx_size": rx_s, "battery_info": f"{batt_s}S {batt_t[:6]}"}
         go_to_step(2); st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
+# ==========================================
+# [Phase 2] AI 추천 및 확장 설계 가이드
+# ==========================================
 elif st.session_state.step == 2:
-    st.header("Step 2. AI 기반 최적 토폴로지 추천")
+    st.header("Step 2. AI 엔지니어 종합 설계 제안")
     if not api_key: 
         st.error("사이드바에 API Key를 입력해주세요.")
         st.button("⬅️ Step 1로 돌아가기", on_click=go_to_step, args=(1,))
     else:
         sd = st.session_state.project_data
         if st.session_state.llm_result is None:
-            with st.status("🧠 AI 수석 엔지니어 분석 중 (SS, SP, LCC-S, Double LCC)...", expanded=True) as status:
-                try:
-                    model = genai.GenerativeModel(selected_model)
-                    prompt = f"WPT Engineer: App {sd['app_type']}, Power {sd['target_power']}W, Vbatt {sd['battery_vol']}V, RxWeight {sd['rx_weight']}g. Recommend one WPT topology among ['SS', 'SP', 'LCC-S', 'Double LCC']. JSON only: {{\"topology\": \"string\", \"reasoning\": \"string\", \"recommended_vin\": int, \"recommended_f0\": 85, \"estimated_m\": float}}"
-                    resp = model.generate_content(prompt, request_options={"timeout": 15.0})
-                    st.session_state.llm_result = json.loads(resp.text.replace('```json', '').replace('```', '').strip())
-                    status.update(label="✅ 분석 완료", state="complete")
-                except:
-                    if sd['rx_weight'] < 100 or sd['target_power'] < 50: topo = "SS"
-                    elif sd['battery_vol'] > 100: topo = "SP"
-                    elif sd['target_power'] > 1000: topo = "Double LCC"
-                    else: topo = "LCC-S"
-                    st.session_state.llm_result = {"topology": topo, "reasoning": "내부 알고리즘 기반 추천 완료.", "recommended_vin": 100, "recommended_f0": 85, "estimated_m": 15.0}
+            with st.status("🧠 AI 수석 엔지니어 다각도 분석 중 (토폴로지, 코일형상, 차폐설계 등)...", expanded=True) as status:
+                for attempt in range(3): # 최대 3회 재시도 (안정성 확보)
+                    try:
+                        model = genai.GenerativeModel(selected_model)
+                        prompt = f"""
+                        You are an expert WPT Engineer. Based on standard WPT papers, analyze:
+                        App: {sd['app_type']}, Power: {sd['target_power']}W, Battery Charge Voltage: {sd['battery_vol_charge']}V, RxWeight: {sd['rx_weight']}g, AirGap: {sd['air_gap']}mm.
+                        Respond ONLY in a flat JSON format (no markdown blocks like ```json).
+                        {{
+                            "topology": "Must be exactly one of: SS, SP, LCC-S, Double LCC",
+                            "reasoning": "Explain why this topology is best.",
+                            "recommended_vin": <integer>,
+                            "recommended_f0": <integer_in_kHz (e.g. 85, 100)>,
+                            "estimated_m": <float_in_uH>,
+                            "coil_design": "Recommend a coil shape (Circular, Rectangular, DD) and why.",
+                            "shielding_guide": "Advice on ferrite core and shielding considering the {sd['rx_weight']}g weight limit."
+                        }}
+                        """
+                        resp = model.generate_content(prompt, request_options={"timeout": 15.0})
+                        clean_text = resp.text.replace('```json', '').replace('```', '').strip()
+                        st.session_state.llm_result = json.loads(clean_text)
+                        break
+                    except Exception as e:
+                        if attempt == 2: # 3번 실패 시 Fallback 로직
+                            if sd['rx_weight'] < 100 or sd['target_power'] < 50: topo = "SS"
+                            elif sd['battery_vol_charge'] > 100: topo = "SP"
+                            elif sd['target_power'] > 1000: topo = "Double LCC"
+                            else: topo = "LCC-S"
+                            st.session_state.llm_result = {
+                                "topology": topo, "reasoning": "네트워크 지연으로 내부 최적화 알고리즘이 대신 토폴로지를 선정했습니다.", 
+                                "recommended_vin": 100, "recommended_f0": 85, "estimated_m": 15.0,
+                                "coil_design": "원형(Circular) 코일은 설계가 간단하고 효율이 우수합니다. 오정렬이 심하다면 DD(Double-D) 코일을 고려하세요.",
+                                "shielding_guide": "무게 제약에 맞춰 1~2mm 두께의 얇은 페라이트 시트(Ferrite Sheet)를 사용하여 누설 자계를 차폐하세요."
+                            }
+                status.update(label="✅ 분석 완료", state="complete")
         
         res = st.session_state.llm_result
+        
+        # UI 레이아웃
         st.markdown('<div class="card-container">', unsafe_allow_html=True)
-        st.subheader(f"✅ 추천 토폴로지: **{res['topology']}**")
-        st.info(res['reasoning'])
+        col_t, col_c, col_s = st.columns(3)
+        with col_t:
+            st.success(f"**🔌 추천 토폴로지: {res['topology']}**")
+            st.write(res['reasoning'])
+        with col_c:
+            st.info(f"**🧲 코일 형상 추천**")
+            st.write(res['coil_design'])
+        with col_s:
+            st.warning(f"**🛡️ 차폐/페라이트 가이드**")
+            st.write(res['shielding_guide'])
         
         cp = estimate_coil_params(res['estimated_m'], sd['air_gap'], sd['rx_weight'])
         st.session_state.tuning_data = {
@@ -309,6 +353,9 @@ elif st.session_state.step == 2:
             go_to_step(next_step); st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
+# ==========================================
+# [Phase 3] 상세 튜닝 (Expert)
+# ==========================================
 elif st.session_state.step == 3:
     st.header("Step 3. 파라미터 상세 튜닝 (Expert)")
     td = st.session_state.tuning_data; sd = st.session_state.project_data
@@ -316,7 +363,7 @@ elif st.session_state.step == 3:
     st.markdown('<div class="card-container">', unsafe_allow_html=True)
     col1, col2 = st.columns([1.2, 1.8])
     with col1:
-        st.subheader("🛠️ 설계 파라미터")
+        st.subheader("🛠️ 설계 파라미터 조작")
         topo_sel = st.selectbox("토폴로지 변경", ["SS", "SP", "LCC-S", "Double LCC"], index=["SS", "SP", "LCC-S", "Double LCC"].index(td['topology']))
         Ltx = st.slider("송신 코일 Ltx (uH)", 10.0, 300.0, float(td['Ltx']))
         Lrx = st.slider("수신 코일 Lrx (uH)", 10.0, 150.0, float(td['Lrx']))
@@ -326,11 +373,11 @@ elif st.session_state.step == 3:
         ratio = st.slider("전류 비율 (Itx/Irx)", 0.5, 3.0, 1.5) if "Double" in topo_sel else 1.0
         
     with col2:
-        st.subheader("⚡ 실시간 설계 프리뷰")
-        if topo_sel == "SS": res = calculate_ss(vin, sd['battery_vol'], sd['target_power'], f0, Ltx*1e-6, Lrx*1e-6, k, 0.085, 0.074)
-        elif topo_sel == "SP": res = calculate_sp(vin, sd['battery_vol'], sd['target_power'], f0, Ltx*1e-6, Lrx*1e-6, k, 0.085, 0.074)
-        elif topo_sel == "LCC-S": res = calculate_lccs(vin, sd['battery_vol'], sd['target_power'], f0, Ltx*1e-6, Lrx*1e-6, k, 0.085, 0.074)
-        else: res = calculate_double_lcc(vin, sd['battery_vol'], sd['target_power'], f0, Ltx*1e-6, Lrx*1e-6, k, ratio, 0.085, 0.074)
+        st.subheader("⚡ 실시간 설계 프리뷰 & 코칭")
+        if topo_sel == "SS": res = calculate_ss(vin, sd['battery_vol_charge'], sd['target_power'], f0, Ltx*1e-6, Lrx*1e-6, k, 0.085, 0.074)
+        elif topo_sel == "SP": res = calculate_sp(vin, sd['battery_vol_charge'], sd['target_power'], f0, Ltx*1e-6, Lrx*1e-6, k, 0.085, 0.074)
+        elif topo_sel == "LCC-S": res = calculate_lccs(vin, sd['battery_vol_charge'], sd['target_power'], f0, Ltx*1e-6, Lrx*1e-6, k, 0.085, 0.074)
+        else: res = calculate_double_lcc(vin, sd['battery_vol_charge'], sd['target_power'], f0, Ltx*1e-6, Lrx*1e-6, k, ratio, 0.085, 0.074)
             
         if "error" in res: st.error(res['error'])
         else:
@@ -344,13 +391,8 @@ elif st.session_state.step == 3:
             p5.metric("목표 전력", f"{sd['target_power']:.1f} W")
             p6.metric("실제 설계 전력", f"{res['Pout_actual']:.1f} W")
 
-            st.divider()
-            cap_html = "<table class='cap-table'><tr>"
-            for name in res['caps'].keys(): cap_html += f"<th>{name}</th>"
-            cap_html += "</tr><tr>"
-            for data in res['caps'].values(): cap_html += f"<td><b>{data['val']*1e9:.2f} nF</b></td>"
-            cap_html += "</tr></table>"
-            st.markdown(cap_html, unsafe_allow_html=True)
+            # 실시간 AI 코칭 박스 렌더링
+            st.markdown(f"<div class='ai-coach'>💡 <b>AI 실시간 코칭</b><br>{generate_ai_coaching(res)}</div>", unsafe_allow_html=True)
             
     st.write("<br>", unsafe_allow_html=True)
     n1, n2, n3 = st.columns([1, 1, 2])
@@ -364,46 +406,43 @@ elif st.session_state.step == 3:
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ==========================================
-# [Phase 4 & 5] 통합 설계 리포트 (초심자/전문가 공통)
+# [Phase 4] 통합 설계 리포트 
 # ==========================================
 elif st.session_state.step == 4:
     st.header("Step 4. 통합 설계 리포트")
     td = st.session_state.tuning_data; sd = st.session_state.project_data
     
-    # 1. 계산 수행
-    if td['topology'] == "SS": res = calculate_ss(td['Vin'], sd['battery_vol'], sd['target_power'], td['f0'], td['Ltx']*1e-6, td['Lrx']*1e-6, td['k'], 0.085, 0.074)
-    elif td['topology'] == "SP": res = calculate_sp(td['Vin'], sd['battery_vol'], sd['target_power'], td['f0'], td['Ltx']*1e-6, td['Lrx']*1e-6, td['k'], 0.085, 0.074)
-    elif td['topology'] == "LCC-S": res = calculate_lccs(td['Vin'], sd['battery_vol'], sd['target_power'], td['f0'], td['Ltx']*1e-6, td['Lrx']*1e-6, td['k'], 0.085, 0.074)
-    else: res = calculate_double_lcc(td['Vin'], sd['battery_vol'], sd['target_power'], td['f0'], td['Ltx']*1e-6, td['Lrx']*1e-6, td['k'], td.get('ratio', 1.5), 0.085, 0.074)
+    if td['topology'] == "SS": res = calculate_ss(td['Vin'], sd['battery_vol_charge'], sd['target_power'], td['f0'], td['Ltx']*1e-6, td['Lrx']*1e-6, td['k'], 0.085, 0.074)
+    elif td['topology'] == "SP": res = calculate_sp(td['Vin'], sd['battery_vol_charge'], sd['target_power'], td['f0'], td['Ltx']*1e-6, td['Lrx']*1e-6, td['k'], 0.085, 0.074)
+    elif td['topology'] == "LCC-S": res = calculate_lccs(td['Vin'], sd['battery_vol_charge'], sd['target_power'], td['f0'], td['Ltx']*1e-6, td['Lrx']*1e-6, td['k'], 0.085, 0.074)
+    else: res = calculate_double_lcc(td['Vin'], sd['battery_vol_charge'], sd['target_power'], td['f0'], td['Ltx']*1e-6, td['Lrx']*1e-6, td['k'], td.get('ratio', 1.5), 0.085, 0.074)
     
     if "error" in res:
         st.error(f"설계 오류: {res['error']}")
         st.button("⬅️ Step 3로 돌아가기", on_click=go_to_step, args=(3,))
         st.stop()
 
-    st.info("💡 팁: 결과값 우측 상단의 **[ ? ]** 아이콘에 마우스를 올리면 해당 값이 도출된 계산 수식을 확인할 수 있습니다.")
+    st.info("💡 팁: 결과값 우측 상단의 **[ ? ]** 마크에 마우스를 올리면 계산 수식 및 부가 설명을 확인할 수 있습니다.")
 
     # [Section 1] 시스템 & 입출력 파라미터
     st.markdown('<div class="card-container">', unsafe_allow_html=True)
     st.subheader("⚡ 시스템 성능 및 입출력 (System & Output)")
     s1, s2, s3, s4 = st.columns(4)
     s1.metric("입력 전압 (Vin)", f"{td['Vin']:.1f} V")
-    s2.metric("출력 전압 (Vout)", f"{res['Vout']:.1f} V", help=r"배터리 공칭 전압과 동일하게 설정됨")
+    s2.metric("목표 충전 전압 (V_charge)", f"{res['Vout']:.1f} V", help=f"배터리 공칭전압({sd['battery_vol_nom']}V)이 아닌, 완충(CV)을 위한 최대 요구 전압을 기준으로 설계됩니다.")
     s3.metric("동작 주파수 (f0)", f"{td['f0']/1000:.1f} kHz")
-    s4.metric("최종 효율 (Eff)", f"{res['efficiency']:.1f} %", help=r"$\eta = \frac{P_{out}}{P_{out} + P_{loss}} \times 100$")
+    s4.metric("최종 효율 (Eff)", f"{res['efficiency']:.1f} %", help=r"$\eta = \frac{P_{out}}{P_{out} + P_{loss,tx} + P_{loss,rx}} \times 100$")
     
     s5, s6, s7, s8 = st.columns(4)
     s5.metric("토폴로지", td['topology'])
-    s6.metric("부하 저항 (R_Leq)", f"{res['RLeq']:.2f} Ω", help=r"AC 등가 부하 저항 (토폴로지에 따라 $\frac{8}{\pi^2}$ 또는 $\frac{\pi^2}{8}$ 배율 적용)")
-    s7.metric("출력 전력 (Pout)", f"{res['Pout_actual']:.1f} W", help=r"$P_{out} = I_{out} \times V_{out}$")
-    s8.metric("출력 전류 (Iout)", f"{res['Iout']:.2f} A", help=r"$I_{out} = \frac{P_{out}}{V_{out}}$")
+    s6.metric("부하 저항 (R_Leq)", f"{res['RLeq']:.2f} Ω", help=r"정류기를 거친 배터리를 AC측에서 바라본 등가 저항 (배율 적용됨)")
+    s7.metric("출력 전력 (Pout)", f"{res['Pout_actual']:.1f} W", help=r"$P_{out} = I_{out} \times V_{charge}$")
+    s8.metric("출력 전류 (Iout)", f"{res['Iout']:.2f} A", help=r"배터리로 들어가는 실제 충전 전류 ($I_{out} = \frac{P_{out}}{V_{charge}}$)")
     st.markdown('</div>', unsafe_allow_html=True)
 
     # [Section 2] 코일 및 공진 소자
     st.markdown('<div class="card-container">', unsafe_allow_html=True)
     st.subheader("🧲 코일 & 공진 네트워크 (Resonators)")
-    
-    # 코일 인덕턴스와 전류
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("송신 코일 (Ltx)", f"{td['Ltx']:.1f} uH")
     c2.metric("수신 코일 (Lrx)", f"{td['Lrx']:.1f} uH")
@@ -411,13 +450,11 @@ elif st.session_state.step == 4:
     c4.metric("상호 인덕턴스 (M)", f"{res['M']*1e6:.1f} uH", help=r"$M = k \sqrt{L_{tx} L_{rx}}$")
     
     c5, c6 = st.columns(2)
-    c5.metric("송신 코일 전류 (Itx_rms)", f"{res['Itx']:.2f} A", help="송신측 주공진 코일에 흐르는 RMS 전류")
-    c6.metric("수신 코일 전류 (Irx_rms)", f"{res['Irx']:.2f} A", help="수신측 주공진 코일에 흐르는 RMS 전류")
+    c5.metric("송신 코일 전류 (Itx_rms)", f"{res['Itx']:.2f} A", help=f"Tx 코일에 흐르는 AC RMS 전류입니다. 코일 동손(Copper Loss) 약 {res['P_loss_tx']:.1f}W 예상.")
+    c6.metric("수신 코일 전류 (Irx_rms)", f"{res['Irx']:.2f} A", help=f"Rx 코일에 흐르는 AC RMS 전류입니다. 코일 동손(Copper Loss) 약 {res['P_loss_rx']:.1f}W 예상.")
     
     st.divider()
     st.markdown("**🔹 공진 커패시터 및 추가 인덕터 설계값**")
-    
-    # 공진 소자들을 컬럼 형태로 배치하여 Tooltip(help) 지원
     cap_cols = st.columns(len(res['caps']) + (1 if td['topology'] == 'LCC-S' else (2 if 'Double' in td['topology'] else 0)))
     idx = 0
     for name, data in res['caps'].items():
@@ -437,7 +474,7 @@ elif st.session_state.step == 4:
     req_tx_sq = res['Itx'] / 7.0
     req_rx_sq = res['Irx'] / 7.0
     
-    st.info(f"💡 통상적으로 코일에 흐르는 전류 **7A 당 1 SQ ($mm^2$)** 이상의 단면적을 가진 와이어를 권장합니다.\n\n"
+    st.info(f"💡 통상적으로 코일에 흐르는 고주파 전류 **7A 당 최소 1 SQ ($mm^2$)** 의 단면적(리쯔와이어)을 권장합니다.\n\n"
             f"- **Tx 코일 필요 단면적:** $\ge$ {req_tx_sq:.2f} $mm^2$ \n"
             f"- **Rx 코일 필요 단면적:** $\ge$ {req_rx_sq:.2f} $mm^2$", icon="📏")
     
@@ -445,41 +482,40 @@ elif st.session_state.step == 4:
     w1, w2, w3 = st.columns(3)
     d_strand = w1.number_input("가닥 지름 (mm) ex) 0.1", value=0.10, step=0.01)
     n_strand = w2.number_input("가닥 수 (N) ex) 600", value=600, step=10)
-    
     calc_sq = ((d_strand / 2)**2) * math.pi * n_strand
     w3.metric("계산된 Litz 단면적", f"{calc_sq:.2f} mm²", help=r"$$SQ = (\frac{d}{2})^2 \times \pi \times N$$")
     
-    if calc_sq >= max(req_tx_sq, req_rx_sq):
-        st.success(f"✅ 입력한 {d_strand}mm / {n_strand}가닥 리쯔와이어({calc_sq:.2f} sq)는 Tx/Rx 전류 규격을 모두 만족합니다.")
-    else:
-        st.error(f"⚠️ 입력한 리쯔와이어 스펙이 부족합니다. 가닥 수(N)를 더 늘리거나 두꺼운 선을 선택하세요.")
+    if calc_sq >= max(req_tx_sq, req_rx_sq): st.success(f"✅ 입력한 {d_strand}mm / {n_strand}가닥 리쯔와이어({calc_sq:.2f} sq)는 Tx/Rx 발열 규격을 모두 만족합니다.")
+    else: st.error(f"⚠️ 리쯔와이어 스펙 부족! 가닥 수(N)를 더 늘리거나 두꺼운 선을 선택하세요.")
     st.markdown('</div>', unsafe_allow_html=True)
 
-    # [Section 4] 시뮬레이션
+    # [Section 4] 시뮬레이션 및 Y축 슬라이더
     st.markdown('<div class="card-container">', unsafe_allow_html=True)
     st.subheader("📈 주파수 응답 특성 시뮬레이션")
+    y_min, y_max = st.slider("그래프 Y축 (효율) 표시 범위", 0, 100, (0, 100))
     df_f = simulate_frequency_response(td['topology'], res, td['f0'], td['Ltx']*1e-6, td['Lrx']*1e-6, res['M'], 0.085, 0.074)
-    st.altair_chart(alt.Chart(df_f).mark_line(color='#0A84FF').encode(x=alt.X('Frequency (kHz)', scale=alt.Scale(zero=False)), y=alt.Y('Efficiency (%)', scale=alt.Scale(zero=False)), tooltip=['Frequency (kHz)', 'Efficiency (%)', 'Output Power (W)']).interactive(), use_container_width=True)
+    chart = alt.Chart(df_f).mark_line(color='#0A84FF').encode(
+        x=alt.X('Frequency (kHz)', scale=alt.Scale(zero=False)),
+        y=alt.Y('Efficiency (%)', scale=alt.Scale(domain=[y_min, y_max], clamp=True)),
+        tooltip=['Frequency (kHz)', 'Efficiency (%)', 'Output Power (W)']
+    ).interactive()
+    st.altair_chart(chart, use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
     
     # [Section 5] CSV 데이터 생성 및 다운로드
-    # Dictionary를 풀어서 CSV로 저장
     csv_dict = {
-        "항목": ["적용 분야", "토폴로지", "목표 전력 (W)", "실제 전력 (W)", "입력 전압 Vin (V)", "출력 전압 Vout (V)", "출력 전류 Iout (A)", 
+        "항목": ["적용 분야", "토폴로지", "목표 전력 (W)", "실제 전력 (W)", "입력 전압 Vin (V)", "충전 전압 Vout (V)", "충전 전류 Iout (A)", 
                "주파수 (kHz)", "최종 효율 (%)", "Tx 코일 (uH)", "Rx 코일 (uH)", "결합계수 (k)", "상호 인덕턴스 M (uH)", 
-               "Itx (A)", "Irx (A)", "필요 Tx 권선 (sq)", "필요 Rx 권선 (sq)"],
+               "Itx (A)", "Irx (A)", "Tx 동손 (W)", "Rx 동손 (W)", "필요 Tx 권선 (sq)", "필요 Rx 권선 (sq)"],
         "값": [sd['app_type'], td['topology'], sd['target_power'], res['Pout_actual'], td['Vin'], res['Vout'], res['Iout'], 
               td['f0']/1000, res['efficiency'], td['Ltx'], td['Lrx'], td['k'], res['M']*1e6, 
-              res['Itx'], res['Irx'], req_tx_sq, req_rx_sq]
+              res['Itx'], res['Irx'], res['P_loss_tx'], res['P_loss_rx'], req_tx_sq, req_rx_sq]
     }
-    # 공진 커패시터 정보 추가
     for name, data in res['caps'].items():
-        csv_dict["항목"].append(name)
-        csv_dict["값"].append(f"{data['val']*1e9:.2f} nF")
+        csv_dict["항목"].append(name); csv_dict["값"].append(f"{data['val']*1e9:.2f} nF")
         
     csv_data = pd.DataFrame(csv_dict).to_csv(index=False).encode('utf-8-sig')
     
-    # 하단 내비게이션 바
     n1, n2, n3 = st.columns([1, 1, 2])
     n1.button("⬅️ 설계 수정 (Step 3)", on_click=go_to_step, args=(3 if st.session_state.mode == 'Manual' else 2,))
     n2.button("🏠 홈으로", on_click=reset_project)
