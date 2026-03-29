@@ -2,6 +2,7 @@ import streamlit as st
 import numpy as np
 import math
 import pandas as pd
+import altair as alt  # [추가됨] 고급 동적 그래프 라이브러리
 
 # --- [Math Engine] 파라미터 설계 및 단일 주파수 효율 계산 ---
 def calculate_lccs(Vin, Vout, Pout, f0, Ltx, Lrx, k, Rtx, Rrx):
@@ -146,13 +147,14 @@ def simulate_frequency_response(topology, res_dict, f0, Ltx, Lrx, M, Rtx, Rrx):
         P_out_arr = (np.abs(I_out_ac)**2) * RLeq
         P_in_arr = np.real(Vin_ac * np.conj(I_in))
 
-    eff_arr = np.where(P_in_arr > 0, (P_out_arr / P_in_arr) * 100, 0)
+    # [수정됨] 0 대신 np.nan을 넣어 Y축이 0으로 강제 추락하는 현상 방지
+    eff_arr = np.where(P_in_arr > 0, (P_out_arr / P_in_arr) * 100, np.nan)
     
     df_freq = pd.DataFrame({
         "Frequency (kHz)": f_arr / 1000,
         "Output Power (W)": P_out_arr,
         "Efficiency (%)": eff_arr
-    }).set_index("Frequency (kHz)")
+    })
     
     return df_freq
 
@@ -198,13 +200,15 @@ else:
 if "error" in res:
     st.error(f"🚨 설계 오류: {res['error']}")
 else:
-    # 1. 효율 분석 대시보드 (복구 완료)
+    # 1. 효율 분석 대시보드
     st.subheader("📊 AC-AC 전송 효율 및 발열 분석 (85kHz 기준)")
     e1, e2 = st.columns([1, 2])
     
     with e1:
         eff_color = "normal" if res['efficiency'] >= 90 else "off"
-        st.metric("예상 AC-AC 효율", f"{res['efficiency']:.1f} %", delta="목표치(90%) 달성" if res['efficiency'] >= 90 else "효율 개선 필요", delta_color=eff_color)
+        # [수정됨] 마우스 오버 툴팁(help) 적용
+        st.metric("예상 AC-AC 효율", f"{res['efficiency']:.1f} %", delta="목표치(90%) 달성" if res['efficiency'] >= 90 else "효율 개선 필요", delta_color=eff_color, 
+                  help="수식: (P_out_ac / P_in_ac) * 100\n설명: 인버터 및 정류기 손실을 제외한 순수 코일 단에서의 전송 효율입니다.")
         st.write(f"- 송신 코일(Tx) 발열량: **{res['P_loss_tx']:.1f} W**")
         st.write(f"- 수신 코일(Rx) 발열량: **{res['P_loss_rx']:.1f} W**")
         
@@ -217,55 +221,73 @@ else:
 
     st.divider()
 
-    # 2. 마그네틱 코일 상태 (복구 완료)
+    # 2. 마그네틱 코일 상태
     st.subheader("마그네틱 (Coil) 파라미터")
     col1, col2, col3 = st.columns(3)
-    col1.metric("상호 인덕턴스 (M)", f"{res['M']*1e6:.2f} μH")
-    col2.metric("송신 코일 전류 (Itx)", f"{res['Itx']:.2f} A", delta="경고: 30A 이상 발열 주의" if res['Itx'] >= 30 else "안정", delta_color="inverse" if res['Itx'] >= 30 else "normal")
-    col3.metric("수신 코일 전류 (Irx)", f"{res['Irx']:.2f} A")
+    # [수정됨] 마우스 오버 툴팁(help) 적용
+    col1.metric("상호 인덕턴스 (M)", f"{res['M']*1e6:.2f} μH", 
+                help="수식: M = k * √(Ltx * Lrx)\n설명: 두 코일 간에 실제로 자속이 교환되는 정도를 나타냅니다.")
+    col2.metric("송신 코일 전류 (Itx)", f"{res['Itx']:.2f} A", delta="경고: 30A 이상 발열 주의" if res['Itx'] >= 30 else "안정", delta_color="inverse" if res['Itx'] >= 30 else "normal", 
+                help="수식(LCC-S): Itx = Vrect_in / (ω * M)\n설명: 목표 출력을 내기 위해 메인 코일에 흘려야 하는 1차측 순환 전류입니다.")
+    col3.metric("수신 코일 전류 (Irx)", f"{res['Irx']:.2f} A", 
+                help="수식: 부하에 전달되는 교류 전류(Iout_ac) 수치와 비례\n설명: 수신 메인 코일에 흐르는 전류로, 발열량 산출의 핵심 지표입니다.")
 
     st.divider()
 
-    # 3. 보상 소자 및 전압 스트레스 (복구 완료)
+    # 3. 보상 소자 및 전압 스트레스
     st.subheader("보상 소자값 및 내압(Voltage Stress) 리포트")
-    def display_voltage_metric(label, capacitance, voltage):
-        st.metric(label, f"{capacitance*1e9:.2f} nF", f"Peak: {voltage:.0f} V", delta_color="off")
+    # [수정됨] 마우스 오버 툴팁(help) 파라미터 추가
+    def display_voltage_metric(label, capacitance, voltage, help_text=""):
+        st.metric(label, f"{capacitance*1e9:.2f} nF", f"Peak: {voltage:.0f} V", delta_color="off", help=help_text)
 
     if topology == "LCC-S (수신부 초경량화)":
         c1, c2, c3 = st.columns(3)
         with c1:
-            display_voltage_metric("Tx 병렬 커패시터 (Cp)", res['Cp'], res['V_Cp_peak'])
+            display_voltage_metric("Tx 병렬 커패시터 (Cp)", res['Cp'], res['V_Cp_peak'], "수식: Cp = 1 / (ω² * Ls)\n설명: 인버터 전류를 증폭시키고 ZVS(영전압 스위칭) 조건을 만듭니다.")
         with c2:
-            display_voltage_metric("Tx 직렬 커패시터 (Cs)", res['Cs'], res['V_Cs_peak'])
+            display_voltage_metric("Tx 직렬 커패시터 (Cs)", res['Cs'], res['V_Cs_peak'], "수식: Cs = 1 / (ω² * (Ltx - Ls))\n설명: 메인 코일(Ltx)의 인덕턴스 일부를 상쇄시켜 공진을 맞춥니다.")
         with c3:
-            display_voltage_metric("Rx 직렬 커패시터 (Crx)", res['Crx'], res['V_Crx_peak'])
+            display_voltage_metric("Rx 직렬 커패시터 (Crx)", res['Crx'], res['V_Crx_peak'], "수식: Crx = 1 / (ω² * Lrx)\n설명: 수신 코일의 인덕턴스를 완전히 상쇄시켜 전력 전송을 극대화합니다.")
             
         st.info(f"💡 정류기 후단 LC 필터 최소 요구치: **Ldc ≥ {res['Ldc_min']*1e6:.2f} μH**")
 
     else:
         c1, c2, c3, c4 = st.columns(4)
         with c1:
-            display_voltage_metric("Tx 병렬 커패시터", res['Clcc_tx'], res['V_parallel_tx_peak'])
+            display_voltage_metric("Tx 병렬 커패시터", res['Clcc_tx'], res['V_parallel_tx_peak'], "수식: Clcc_tx = 1 / (ω² * Llcc_tx)\n설명: 송신단 LCC 네트워크의 공진을 담당합니다.")
         with c2:
-            display_voltage_metric("Tx 직렬 커패시터", res['Cp_tx'], res['V_series_tx_peak'])
+            display_voltage_metric("Tx 직렬 커패시터", res['Cp_tx'], res['V_series_tx_peak'], "수식: Cp_tx = 1 / (ω² * (Ltx - Llcc_tx))\n설명: 메인 코일과 결합하여 정전류 특성을 만듭니다.")
         with c3:
-            display_voltage_metric("Rx 병렬 커패시터", res['Clcc_rx'], res['V_parallel_rx_peak'])
+            display_voltage_metric("Rx 병렬 커패시터", res['Clcc_rx'], res['V_parallel_rx_peak'], "수식: Clcc_rx = 1 / (ω² * Llcc_rx)\n설명: 수신단 LCC 네트워크의 공진을 담당합니다.")
         with c4:
-            display_voltage_metric("Rx 직렬 커패시터", res['Cp_rx'], res['V_series_rx_peak'])
+            display_voltage_metric("Rx 직렬 커패시터", res['Cp_rx'], res['V_series_rx_peak'], "수식: Cp_rx = 1 / (ω² * (Lrx - Llcc_rx))\n설명: 수신 부하에 관계없이 일정한 전류를 뽑아냅니다.")
 
     st.divider()
 
-    # 4. 주파수 응답 시뮬레이션 (새로 추가된 부분을 아래로 배치)
+    # 4. 주파수 응답 시뮬레이션
     st.subheader("📈 AC 주파수 응답 (Frequency Response) 해석")
     st.markdown("85kHz 중심 주파수 대역(75kHz~95kHz)에서의 전력 전달 및 효율 특성입니다. **결합 계수(k)** 슬라이더를 조절하여 오정렬(Misalignment) 발생 시의 특성 변화를 관찰해 보세요.")
     
     df_freq = simulate_frequency_response(topology, res, f0, Ltx, Lrx, res['M'], Rtx, Rrx)
     
+    # [수정됨] Altair 적용으로 Y축 자동 줌(Dynamic Scaling) 구현
     tab1, tab2 = st.tabs(["출력 전력 (Output Power)", "전송 효율 (Efficiency)"])
+    
     with tab1:
-        st.line_chart(df_freq["Output Power (W)"], height=300)
+        power_chart = alt.Chart(df_freq).mark_line(color='#1f77b4', strokeWidth=3).encode(
+            x=alt.X('Frequency (kHz)', scale=alt.Scale(zero=False)),
+            y=alt.Y('Output Power (W)', scale=alt.Scale(zero=False)), # Y축 0 강제 고정 해제
+            tooltip=['Frequency (kHz)', 'Output Power (W)']
+        ).interactive()
+        st.altair_chart(power_chart, use_container_width=True)
+        
     with tab2:
-        st.line_chart(df_freq["Efficiency (%)"], height=300)
+        eff_chart = alt.Chart(df_freq).mark_line(color='#ff7f0e', strokeWidth=3).encode(
+            x=alt.X('Frequency (kHz)', scale=alt.Scale(zero=False)),
+            y=alt.Y('Efficiency (%)', scale=alt.Scale(zero=False)), # Y축 데이터에 맞춰 자동 조절 (예: 80~100)
+            tooltip=['Frequency (kHz)', 'Efficiency (%)']
+        ).interactive()
+        st.altair_chart(eff_chart, use_container_width=True)
 
     st.divider()
 
