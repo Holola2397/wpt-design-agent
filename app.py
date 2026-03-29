@@ -1,323 +1,153 @@
 import streamlit as st
-import numpy as np
-import math
 import pandas as pd
-import altair as alt  # [추가됨] 고급 동적 그래프 라이브러리
 
-# --- [Math Engine] 파라미터 설계 및 단일 주파수 효율 계산 ---
-def calculate_lccs(Vin, Vout, Pout, f0, Ltx, Lrx, k, Rtx, Rrx):
-    w = 2 * math.pi * f0
-    Vin_ac_rms = 2 * math.sqrt(2) / math.pi * Vin
-    Iout = Pout / Vout
-    RL = Vout / Iout
-    RLeq = RL * (math.pi**2) / 8
-    
-    Vrect_in = Vout * math.pi / (2 * math.sqrt(2))
-    Iout_ac = Iout * (2 * math.sqrt(2)) / math.pi
-    
-    M = k * math.sqrt(Ltx * Lrx)
-    Itx = Vrect_in / (w * M)
-    Irx = Iout_ac
-    
-    Ls = Vin_ac_rms / (w * Itx)
-    if Ls >= Ltx:
-        return {"error": "Ls가 Ltx보다 큽니다. Ltx나 M을 더 키우거나 Vin을 높이세요."}
-        
-    Cp = 1 / (w**2 * Ls)
-    Cs = 1 / (w**2 * (Ltx - Ls))
-    Crx = 1 / (w**2 * Lrx)
-    Ldc_min = RL / (3 * w)
-    
-    V_Ltx_peak = math.sqrt(2) * w * Ltx * Itx
-    V_Cp_peak = math.sqrt(2) * w * Ls * Itx
-    V_Cs_peak = math.sqrt(2) * Itx / (w * Cs)
-    V_Crx_peak = math.sqrt(2) * Irx / (w * Crx)
+# --- [System Setup] 페이지 및 상태 초기화 ---
+st.set_page_config(page_title="Intelligent WPT Platform", layout="wide")
 
-    P_out_ac = (Irx**2) * RLeq
-    P_loss_tx = (Itx**2) * Rtx
-    P_loss_rx = (Irx**2) * Rrx
-    P_in_ac = P_out_ac + P_loss_tx + P_loss_rx
-    efficiency = (P_out_ac / P_in_ac) * 100
-    
-    return {
-        "Itx": Itx, "Irx": Irx, "M": M,
-        "Ls": Ls, "Cp": Cp, "Cs": Cs, "Crx": Crx, "Ldc_min": Ldc_min,
-        "V_Ltx_peak": V_Ltx_peak, "V_Cp_peak": V_Cp_peak, "V_Cs_peak": V_Cs_peak, "V_Crx_peak": V_Crx_peak,
-        "P_out_ac": P_out_ac, "P_loss_tx": P_loss_tx, "P_loss_rx": P_loss_rx, "efficiency": efficiency,
-        "RLeq": RLeq, "Vin_ac": Vin_ac_rms
-    }
+# 세션 상태(Session State) 초기화: 현재 스텝, 사용자 모드, 입력 데이터 저장용
+if 'step' not in st.session_state:
+    st.session_state.step = 0
+if 'mode' not in st.session_state:
+    st.session_state.mode = None
+if 'project_data' not in st.session_state:
+    st.session_state.project_data = {}
 
-def calculate_double_lcc(Vin, Vout, Pout, f0, Ltx, Lrx, k, current_ratio, Rtx, Rrx):
-    w = 2 * math.pi * f0
-    Vin_ac_rms = 2 * math.sqrt(2) / math.pi * Vin
-    Iout = Pout / Vout
-    RL = Vout / Iout
-    RLeq = RL * 8 / (math.pi**2)
-    
-    Vrect_in = 2 * math.sqrt(2) / math.pi * Vout
-    Iout_ac = Iout * math.sqrt(2) * math.pi / 4
-    
-    M = k * math.sqrt(Ltx * Lrx)
-    L_product = (M * Vin_ac_rms) / (w * Iout_ac)
-    L_ratio = current_ratio * (Vrect_in / Vin_ac_rms)
-    
-    Llcc_tx = math.sqrt(L_product / L_ratio)
-    Llcc_rx = math.sqrt(L_product * L_ratio)
-    
-    if Llcc_tx >= Ltx or Llcc_rx >= Lrx:
-        return {"error": "보상 인덕터(Llcc)가 메인 코일보다 커서 물리적으로 구현 불가합니다."}
-        
-    Clcc_tx = 1 / (w**2 * Llcc_tx)
-    Clcc_rx = 1 / (w**2 * Llcc_rx)
-    Cp_tx = 1 / (w**2 * (Ltx - Llcc_tx))
-    Cp_rx = 1 / (w**2 * (Lrx - Llcc_rx))
-    
-    Itx = Vin_ac_rms / (w * Llcc_tx)
-    Irx = Vrect_in / (w * Llcc_rx)
+# 스텝 이동 함수
+def go_to_step(step_num):
+    st.session_state.step = step_num
 
-    V_Ltx_peak = math.sqrt(2) * w * Ltx * Itx
-    V_parallel_tx_peak = math.sqrt(2) * w * Llcc_tx * Itx
-    V_series_tx_peak = math.sqrt(2) * Itx / (w * Cp_tx)
-    V_Lrx_peak = math.sqrt(2) * w * Lrx * Irx
-    V_parallel_rx_peak = math.sqrt(2) * w * Llcc_rx * Irx
-    V_series_rx_peak = math.sqrt(2) * Irx / (w * Cp_rx)
+def set_mode_and_next(mode):
+    st.session_state.mode = mode
+    st.session_state.step = 1
 
-    P_out_ac = (Irx**2) * RLeq
-    P_loss_tx = (Itx**2) * Rtx
-    P_loss_rx = (Irx**2) * Rrx
-    P_in_ac = P_out_ac + P_loss_tx + P_loss_rx
-    efficiency = (P_out_ac / P_in_ac) * 100
-    
-    return {
-        "Itx": Itx, "Irx": Irx, "M": M,
-        "Llcc_tx": Llcc_tx, "Llcc_rx": Llcc_rx, "Clcc_tx": Clcc_tx, "Clcc_rx": Clcc_rx, "Cp_tx": Cp_tx, "Cp_rx": Cp_rx,
-        "V_Ltx_peak": V_Ltx_peak, "V_parallel_tx_peak": V_parallel_tx_peak, "V_series_tx_peak": V_series_tx_peak,
-        "V_Lrx_peak": V_Lrx_peak, "V_parallel_rx_peak": V_parallel_rx_peak, "V_series_rx_peak": V_series_rx_peak,
-        "P_out_ac": P_out_ac, "P_loss_tx": P_loss_tx, "P_loss_rx": P_loss_rx, "efficiency": efficiency,
-        "RLeq": RLeq, "Vin_ac": Vin_ac_rms
-    }
-
-# --- [AC Sweep Engine] 주파수 응답 복소 임피던스 시뮬레이션 ---
-def simulate_frequency_response(topology, res_dict, f0, Ltx, Lrx, M, Rtx, Rrx):
-    f_arr = np.linspace(75e3, 95e3, 200)
-    w_arr = 2 * np.pi * f_arr
-    
-    Vin_ac = res_dict["Vin_ac"]
-    RLeq = res_dict["RLeq"]
-    
-    if topology == "LCC-S (수신부 초경량화)":
-        Ls, Cp, Cs, Crx = res_dict['Ls'], res_dict['Cp'], res_dict['Cs'], res_dict['Crx']
-        
-        Z_rx = RLeq + Rrx + 1j*w_arr*Lrx + 1/(1j*w_arr*Crx)
-        Z_refl = (w_arr * M)**2 / Z_rx
-        Z_tx_branch = Rtx + 1j*w_arr*Ltx + 1/(1j*w_arr*Cs) + Z_refl
-        Z_p = (1/(1j*w_arr*Cp)) * Z_tx_branch / ((1/(1j*w_arr*Cp)) + Z_tx_branch)
-        Z_in = 1j*w_arr*Ls + Z_p
-        
-        I_in = Vin_ac / Z_in
-        V_Cp = I_in * Z_p
-        I_tx = V_Cp / Z_tx_branch
-        I_rx = (1j * w_arr * M * I_tx) / Z_rx
-        
-        P_out_arr = (np.abs(I_rx)**2) * RLeq
-        P_in_arr = np.real(Vin_ac * np.conj(I_in))
-        
-    else: 
-        Llcc_tx, Clcc_tx, Cp_tx = res_dict['Llcc_tx'], res_dict['Clcc_tx'], res_dict['Cp_tx']
-        Llcc_rx, Clcc_rx, Cp_rx = res_dict['Llcc_rx'], res_dict['Clcc_rx'], res_dict['Cp_rx']
-        
-        Z_load_branch = RLeq + 1j*w_arr*Llcc_rx + 1/(1j*w_arr*Clcc_rx)
-        Z_p_rx = (1/(1j*w_arr*Cp_rx)) * Z_load_branch / ((1/(1j*w_arr*Cp_rx)) + Z_load_branch)
-        Z_rx_total = Rrx + 1j*w_arr*Lrx + Z_p_rx
-        
-        Z_refl = (w_arr * M)**2 / Z_rx_total
-        Z_tx_main = Rtx + 1j*w_arr*Ltx + Z_refl
-        Z_p_tx = (1/(1j*w_arr*Cp_tx)) * Z_tx_main / ((1/(1j*w_arr*Cp_tx)) + Z_tx_main)
-        Z_in = 1j*w_arr*Llcc_tx + 1/(1j*w_arr*Clcc_tx) + Z_p_tx
-        
-        I_in = Vin_ac / Z_in
-        V_Cp_tx = I_in * Z_p_tx
-        I_tx = V_Cp_tx / Z_tx_main
-        
-        V_rx_ind = 1j * w_arr * M * I_tx
-        I_rx_main = V_rx_ind / Z_rx_total
-        V_Cp_rx = I_rx_main * Z_p_rx
-        I_out_ac = V_Cp_rx / Z_load_branch
-        
-        P_out_arr = (np.abs(I_out_ac)**2) * RLeq
-        P_in_arr = np.real(Vin_ac * np.conj(I_in))
-
-    # [수정됨] 0 대신 np.nan을 넣어 Y축이 0으로 강제 추락하는 현상 방지
-    eff_arr = np.where(P_in_arr > 0, (P_out_arr / P_in_arr) * 100, np.nan)
-    
-    df_freq = pd.DataFrame({
-        "Frequency (kHz)": f_arr / 1000,
-        "Output Power (W)": P_out_arr,
-        "Efficiency (%)": eff_arr
-    })
-    
-    return df_freq
-
-# --- [Web UI] 프론트엔드 화면 구성 ---
-st.set_page_config(page_title="WPT Design & Simulator", layout="wide")
-st.title("⚡ 무선전력전송(WPT) 자동 설계 & 시뮬레이터")
-
-with st.sidebar:
-    st.header("1. 시스템 스펙 입력")
-    Vin = st.number_input("입력 전압 Vin (V)", min_value=10.0, value=100.0, step=10.0)
-    Vout = st.number_input("목표 출력 전압 Vout (V)", min_value=10.0, value=200.0, step=10.0)
-    Pout = st.number_input("목표 출력 전력 Pout (W)", min_value=10.0, value=300.0, step=50.0)
-    f0_khz = st.number_input("중심 주파수 (kHz)", min_value=10.0, value=85.0, step=1.0)
-    f0 = f0_khz * 1000
-
-    st.header("2. 토폴로지 선택")
-    topology = st.selectbox("적용할 구조를 선택하세요", ["LCC-S (수신부 초경량화)", "Double LCC (고효율/CC충전)"])
-
-    st.header("3. 코일 파라미터 튜닝")
-    Ltx_uH = st.slider("송신 코일 Ltx (μH)", 10.0, 150.0, 80.0, step=1.0)
-    Lrx_uH = st.slider("수신 코일 Lrx (μH)", 10.0, 150.0, 80.0, step=1.0)
-    k = st.slider("결합 계수 k (이격 거리 반영)", 0.05, 0.50, 0.196, step=0.001)
-    
-    st.header("4. 코일 저항 입력")
-    Rtx_m = st.number_input("송신 코일 저항 Rtx (mΩ)", min_value=1.0, value=85.0, step=1.0)
-    Rrx_m = st.number_input("수신 코일 저항 Rrx (mΩ)", min_value=1.0, value=74.0, step=1.0)
-    Rtx = Rtx_m * 1e-3
-    Rrx = Rrx_m * 1e-3
-    
-    current_ratio = 1.0
-    if topology == "Double LCC (고효율/CC충전)":
-        current_ratio = st.slider("전류 비율 (Itx / Irx)", 0.5, 3.0, 1.5, step=0.1)
-
-    Ltx = Ltx_uH * 1e-6
-    Lrx = Lrx_uH * 1e-6
-
-# 메인 화면 결과 출력
-if topology == "LCC-S (수신부 초경량화)":
-    res = calculate_lccs(Vin, Vout, Pout, f0, Ltx, Lrx, k, Rtx, Rrx)
-else:
-    res = calculate_double_lcc(Vin, Vout, Pout, f0, Ltx, Lrx, k, current_ratio, Rtx, Rrx)
-
-if "error" in res:
-    st.error(f"🚨 설계 오류: {res['error']}")
-else:
-    # 1. 효율 분석 대시보드
-    st.subheader("📊 AC-AC 전송 효율 및 발열 분석 (85kHz 기준)")
-    e1, e2 = st.columns([1, 2])
-    
-    with e1:
-        eff_color = "normal" if res['efficiency'] >= 90 else "off"
-        # [수정됨] 마우스 오버 툴팁(help) 적용
-        st.metric("예상 AC-AC 효율", f"{res['efficiency']:.1f} %", delta="목표치(90%) 달성" if res['efficiency'] >= 90 else "효율 개선 필요", delta_color=eff_color, 
-                  help="수식: (P_out_ac / P_in_ac) * 100\n설명: 인버터 및 정류기 손실을 제외한 순수 코일 단에서의 전송 효율입니다.")
-        st.write(f"- 송신 코일(Tx) 발열량: **{res['P_loss_tx']:.1f} W**")
-        st.write(f"- 수신 코일(Rx) 발열량: **{res['P_loss_rx']:.1f} W**")
-        
-    with e2:
-        loss_data = pd.DataFrame({
-            "항목": ["전달된 전력 (AC Output)", "송신 코일 손실", "수신 코일 손실"],
-            "전력 (W)": [res['P_out_ac'], res['P_loss_tx'], res['P_loss_rx']]
-        })
-        st.bar_chart(loss_data.set_index("항목"), height=200)
-
+# --- [UI Layout] 프로그레스 바 (진행 상태 표시) ---
+if st.session_state.step > 0:
+    st.progress(st.session_state.step / 5.0, text=f"Step {st.session_state.step} / 5 진행 중...")
     st.divider()
 
-    # 2. 마그네틱 코일 상태
-    st.subheader("마그네틱 (Coil) 파라미터")
-    col1, col2, col3 = st.columns(3)
-    # [수정됨] 마우스 오버 툴팁(help) 적용
-    col1.metric("상호 인덕턴스 (M)", f"{res['M']*1e6:.2f} μH", 
-                help="수식: M = k * √(Ltx * Lrx)\n설명: 두 코일 간에 실제로 자속이 교환되는 정도를 나타냅니다.")
-    col2.metric("송신 코일 전류 (Itx)", f"{res['Itx']:.2f} A", delta="경고: 30A 이상 발열 주의" if res['Itx'] >= 30 else "안정", delta_color="inverse" if res['Itx'] >= 30 else "normal", 
-                help="수식(LCC-S): Itx = Vrect_in / (ω * M)\n설명: 목표 출력을 내기 위해 메인 코일에 흘려야 하는 1차측 순환 전류입니다.")
-    col3.metric("수신 코일 전류 (Irx)", f"{res['Irx']:.2f} A", 
-                help="수식: 부하에 전달되는 교류 전류(Iout_ac) 수치와 비례\n설명: 수신 메인 코일에 흐르는 전류로, 발열량 산출의 핵심 지표입니다.")
+# ==========================================
+# [Phase 0] 진입 화면: 사용자 모드 선택
+# ==========================================
+if st.session_state.step == 0:
+    st.title("⚡ 지능형 WPT 모듈 통합 설계 플랫폼")
+    st.markdown("본 시스템은 무선전력전송 모듈의 요구사항 분석부터 파라미터 도출, 효율 시뮬레이션까지 원스톱으로 제공합니다.")
+    
+    st.write("### 설계 모드를 선택해 주십시오.")
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.info("💡 **초심자 / 기획자용 (Auto Mode)**")
+        st.write("어플리케이션과 물리적 제약조건만 입력하면, AI가 최적의 토폴로지와 초기 파라미터를 역산하여 추천합니다.")
+        st.button("Auto Mode 시작하기", use_container_width=True, on_click=set_mode_and_next, args=('Auto',))
+        
+    with col2:
+        st.warning("⚙️ **고급 설계자용 (Manual Mode)**")
+        st.write("AI 추천값을 바탕으로 엔지니어가 직접 코일 스펙과 보상 소자를 미세 조정(Tuning)할 수 있습니다.")
+        st.button("Manual Mode 시작하기", use_container_width=True, on_click=set_mode_and_next, args=('Manual',))
 
-    st.divider()
-
-    # 3. 보상 소자 및 전압 스트레스
-    st.subheader("보상 소자값 및 내압(Voltage Stress) 리포트")
-    # [수정됨] 마우스 오버 툴팁(help) 파라미터 추가
-    def display_voltage_metric(label, capacitance, voltage, help_text=""):
-        st.metric(label, f"{capacitance*1e9:.2f} nF", f"Peak: {voltage:.0f} V", delta_color="off", help=help_text)
-
-    if topology == "LCC-S (수신부 초경량화)":
-        c1, c2, c3 = st.columns(3)
+# ==========================================
+# [Phase 1] 프로젝트 정의 및 제약 조건 입력
+# ==========================================
+elif st.session_state.step == 1:
+    st.header("Step 1. 시스템 요구사항 및 제약 조건 입력")
+    st.markdown("설계하고자 하는 어플리케이션의 물리적, 전기적 한계를 정의합니다.")
+    
+    with st.form("constraints_form"):
+        c1, c2 = st.columns(2)
         with c1:
-            display_voltage_metric("Tx 병렬 커패시터 (Cp)", res['Cp'], res['V_Cp_peak'], "수식: Cp = 1 / (ω² * Ls)\n설명: 인버터 전류를 증폭시키고 ZVS(영전압 스위칭) 조건을 만듭니다.")
-        with c2:
-            display_voltage_metric("Tx 직렬 커패시터 (Cs)", res['Cs'], res['V_Cs_peak'], "수식: Cs = 1 / (ω² * (Ltx - Ls))\n설명: 메인 코일(Ltx)의 인덕턴스 일부를 상쇄시켜 공진을 맞춥니다.")
-        with c3:
-            display_voltage_metric("Rx 직렬 커패시터 (Crx)", res['Crx'], res['V_Crx_peak'], "수식: Crx = 1 / (ω² * Lrx)\n설명: 수신 코일의 인덕턴스를 완전히 상쇄시켜 전력 전송을 극대화합니다.")
+            st.subheader("🎯 어플리케이션 정보")
+            app_type = st.selectbox("적용 분야", ["드론 (UAV)", "사족보행 로봇", "AGV/AMR", "전기차 (EV)", "모바일/가전"])
+            battery_type = st.selectbox("배터리 종류", ["Li-ion (리튬이온)", "LiPo (리튬폴리머)", "LFP (리튬인산철)"])
+            battery_vol = st.number_input("배터리 팩 공칭 전압 (V)", value=48.0, step=1.0)
+            target_power = st.number_input("목표 충전 전력 (W)", value=300.0, step=50.0)
             
-        st.info(f"💡 정류기 후단 LC 필터 최소 요구치: **Ldc ≥ {res['Ldc_min']*1e6:.2f} μH**")
-
-    else:
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            display_voltage_metric("Tx 병렬 커패시터", res['Clcc_tx'], res['V_parallel_tx_peak'], "수식: Clcc_tx = 1 / (ω² * Llcc_tx)\n설명: 송신단 LCC 네트워크의 공진을 담당합니다.")
         with c2:
-            display_voltage_metric("Tx 직렬 커패시터", res['Cp_tx'], res['V_series_tx_peak'], "수식: Cp_tx = 1 / (ω² * (Ltx - Llcc_tx))\n설명: 메인 코일과 결합하여 정전류 특성을 만듭니다.")
-        with c3:
-            display_voltage_metric("Rx 병렬 커패시터", res['Clcc_rx'], res['V_parallel_rx_peak'], "수식: Clcc_rx = 1 / (ω² * Llcc_rx)\n설명: 수신단 LCC 네트워크의 공진을 담당합니다.")
-        with c4:
-            display_voltage_metric("Rx 직렬 커패시터", res['Cp_rx'], res['V_series_rx_peak'], "수식: Cp_rx = 1 / (ω² * (Lrx - Llcc_rx))\n설명: 수신 부하에 관계없이 일정한 전류를 뽑아냅니다.")
+            st.subheader("📦 물리적 제약 조건")
+            rx_weight_limit = st.number_input("수신부(Rx) 최대 허용 무게 (g)", value=400, step=50, help="초경량화가 필요한 경우 타이트하게 설정하세요.")
+            tx_size = st.text_input("송신 패드(Tx) 가용 면적 (예: 200x200mm)", "200x200")
+            rx_size = st.text_input("수신 패드(Rx) 가용 면적 (예: 100x100mm)", "100x100")
+            air_gap = st.number_input("예상 이격 거리 (Air Gap, mm)", value=50, step=5)
+            
+        submitted = st.form_submit_button("입력 완료 및 다음 단계로 ➔")
+        if submitted:
+            # 입력 데이터 세션에 저장
+            st.session_state.project_data = {
+                "app_type": app_type, "battery_type": battery_type, "battery_vol": battery_vol,
+                "target_power": target_power, "rx_weight_limit": rx_weight_limit,
+                "tx_size": tx_size, "rx_size": rx_size, "air_gap": air_gap
+            }
+            go_to_step(2)
+    
+    st.button("⬅️ 처음으로 돌아가기", on_click=go_to_step, args=(0,))
 
+# ==========================================
+# [Phase 2] 지능형 추천 및 토폴로지 선정 (LLM 연동 예정 위치)
+# ==========================================
+elif st.session_state.step == 2:
+    st.header("Step 2. AI 기반 토폴로지 및 스펙 추천")
+    st.info("⏳ 앞서 입력하신 제약 조건을 바탕으로 최적의 설계를 분석 중입니다... (향후 LLM API 연동됨)")
+    
+    # 임시 목업(Mock-up) 결과 화면
+    st.subheader(f"✅ 추천 토폴로지: **LCC-S (수신부 초경량화 구조)**")
+    st.markdown(f"> **추천 사유 (AI 분석):**\n> 입력하신 **{st.session_state.project_data.get('app_type', '')}** 어플리케이션은 수신부 최대 허용 무게가 **{st.session_state.project_data.get('rx_weight_limit', '')}g**으로 매우 제한적입니다. 따라서 수신측 보상 인덕터가 생략되어 극단적인 경량화가 가능한 LCC-S 구조가 적합합니다.")
+    
     st.divider()
+    st.write("### AI 역산 제안 파라미터")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("권장 입력 전압 (Vin)", "100 V")
+    col2.metric("권장 스위칭 주파수 (f0)", "85 kHz")
+    col3.metric("요구 상호 인덕턴스 (M)", "15.68 μH")
+    
+    st.write("<br>", unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        st.button("⬅️ 이전 단계로", on_click=go_to_step, args=(1,), use_container_width=True)
+    with c2:
+        if st.session_state.mode == 'Auto':
+            st.button("바로 시뮬레이션 결과 보기 ➔", on_click=go_to_step, args=(4,), type="primary", use_container_width=True)
+        else:
+            st.button("파라미터 상세 튜닝하기 (Manual) ➔", on_click=go_to_step, args=(3,), type="primary", use_container_width=True)
 
-    # 4. 주파수 응답 시뮬레이션
-    st.subheader("📈 AC 주파수 응답 (Frequency Response) 해석")
-    st.markdown("85kHz 중심 주파수 대역(75kHz~95kHz)에서의 전력 전달 및 효율 특성입니다. **결합 계수(k)** 슬라이더를 조절하여 오정렬(Misalignment) 발생 시의 특성 변화를 관찰해 보세요.")
+# ==========================================
+# [Phase 3] 파라미터 상세 설계 (Manual Mode 전용)
+# ==========================================
+elif st.session_state.step == 3:
+    st.header("Step 3. 코일 및 파라미터 상세 튜닝 (Expert)")
+    st.markdown("초기 추천값을 바탕으로 코일 인덕턴스와 결합 계수를 미세 조정합니다.")
     
-    df_freq = simulate_frequency_response(topology, res, f0, Ltx, Lrx, res['M'], Rtx, Rrx)
+    # 기존 코드에 있던 좌측 슬라이더들을 이곳에 배치할 예정
+    st.warning("🔧 (이곳에 기존의 Ltx, Lrx, k 슬라이더와 실시간 코일 전류 게이지가 배치됩니다.)")
     
-    # [수정됨] Altair 적용으로 Y축 자동 줌(Dynamic Scaling) 구현
-    tab1, tab2 = st.tabs(["출력 전력 (Output Power)", "전송 효율 (Efficiency)"])
+    c1, c2 = st.columns(2)
+    with c1:
+        st.button("⬅️ 이전 단계로", on_click=go_to_step, args=(2,), use_container_width=True)
+    with c2:
+        st.button("시뮬레이션 및 최종 리포트 생성 ➔", on_click=go_to_step, args=(4,), type="primary", use_container_width=True)
+
+# ==========================================
+# [Phase 4 & 5] 최종 시뮬레이션 리포트 및 Export
+# ==========================================
+elif st.session_state.step == 4:
+    st.header("Step 4 & 5. 최종 설계 리포트 및 데이터 내보내기")
+    st.success("🎉 시스템 설계가 완료되었습니다.")
+    
+    # 탭으로 결과 화면 분리
+    tab1, tab2, tab3 = st.tabs(["📊 효율 및 발열 분석", "⚡ 파라미터 및 내압", "📈 주파수 응답 시뮬레이션"])
     
     with tab1:
-        power_chart = alt.Chart(df_freq).mark_line(color='#1f77b4', strokeWidth=3).encode(
-            x=alt.X('Frequency (kHz)', scale=alt.Scale(zero=False)),
-            y=alt.Y('Output Power (W)', scale=alt.Scale(zero=False)), # Y축 0 강제 고정 해제
-            tooltip=['Frequency (kHz)', 'Output Power (W)']
-        ).interactive()
-        st.altair_chart(power_chart, use_container_width=True)
-        
+        st.write("(이곳에 기존의 효율 분석 막대 그래프와 발열량 수치가 렌더링됩니다.)")
     with tab2:
-        eff_chart = alt.Chart(df_freq).mark_line(color='#ff7f0e', strokeWidth=3).encode(
-            x=alt.X('Frequency (kHz)', scale=alt.Scale(zero=False)),
-            y=alt.Y('Efficiency (%)', scale=alt.Scale(zero=False)), # Y축 데이터에 맞춰 자동 조절 (예: 80~100)
-            tooltip=['Frequency (kHz)', 'Efficiency (%)']
-        ).interactive()
-        st.altair_chart(eff_chart, use_container_width=True)
-
+        st.write("(이곳에 Ltx, Lrx, Cp, Cs 등의 소자값 및 내압 가이드가 렌더링됩니다.)")
+    with tab3:
+        st.write("(이곳에 75kHz~95kHz 주파수 응답 Altair 동적 그래프가 렌더링됩니다.)")
+        
     st.divider()
-
-    # 5. 데이터 다운로드
-    st.subheader("📥 설계 데이터 다운로드")
     
-    export_data = {
-        "분류": ["시스템", "시스템", "시스템", "시스템", "코일", "코일", "코일", "코일", "코일", "코일", "효율", "효율", "효율"],
-        "파라미터 항목": ["입력 전압 (Vin)", "출력 전압 (Vout)", "출력 전력 (Pout)", "주파수 (f0)", "송신 코일 (Ltx)", "수신 코일 (Lrx)", "상호 인덕턴스 (M)", "결합 계수 (k)", "송신 코일 전류 (Itx)", "수신 코일 전류 (Irx)", "예상 전송 효율", "Tx 발열량", "Rx 발열량"],
-        "설계 값": [Vin, Vout, Pout, f0_khz, Ltx*1e6, Lrx*1e6, res['M']*1e6, k, res['Itx'], res['Irx'], res['efficiency'], res['P_loss_tx'], res['P_loss_rx']],
-        "단위": ["V", "V", "W", "kHz", "μH", "μH", "μH", "", "A", "A", "%", "W", "W"]
-    }
+    st.subheader("📥 프로젝트 데이터 Export")
+    st.markdown("입력하신 제약 조건과 최종 계산된 파라미터를 하나의 CSV 파일로 다운로드합니다.")
     
-    if topology == "LCC-S (수신부 초경량화)":
-        export_data["분류"].extend(["보상소자", "보상소자", "보상소자", "보상소자", "필터"])
-        export_data["파라미터 항목"].extend(["Tx 직렬 인덕터 (Ls)", "Tx 병렬 커패시터 (Cp)", "Tx 직렬 커패시터 (Cs)", "Rx 직렬 커패시터 (Crx)", "최소 DC 인덕터 (Ldc_min)"])
-        export_data["설계 값"].extend([res['Ls']*1e6, res['Cp']*1e9, res['Cs']*1e9, res['Crx']*1e9, res['Ldc_min']*1e6])
-        export_data["단위"].extend(["μH", "nF", "nF", "nF", "μH"])
-    else:
-        export_data["분류"].extend(["보상소자", "보상소자", "보상소자", "보상소자", "보상소자", "보상소자"])
-        export_data["파라미터 항목"].extend(["Tx 직렬 인덕터 (Llcc_tx)", "Rx 직렬 인덕터 (Llcc_rx)", "Tx 직렬 커패시터 (Clcc_tx)", "Rx 직렬 커패시터 (Clcc_rx)", "Tx 병렬 커패시터 (Cp_tx)", "Rx 병렬 커패시터 (Cp_rx)"])
-        export_data["설계 값"].extend([res['Llcc_tx']*1e6, res['Llcc_rx']*1e6, res['Clcc_tx']*1e9, res['Clcc_rx']*1e9, res['Cp_tx']*1e9, res['Cp_rx']*1e9])
-        export_data["단위"].extend(["μH", "μH", "nF", "nF", "nF", "nF"])
-
-    df_export = pd.DataFrame(export_data)
-    csv_data = df_export.to_csv(index=False).encode('utf-8-sig')
+    # 다운로드 버튼 (임시)
+    st.button("📊 사업계획서용 전체 설계 데이터 다운로드 (.csv)", type="primary")
     
-    st.download_button(
-        label="📊 설계 파라미터 엑셀(CSV) 다운로드",
-        data=csv_data,
-        file_name="wpt_design_parameters_with_sim.csv",
-        mime="text/csv",
-    )
+    st.write("<br>", unsafe_allow_html=True)
+    st.button("🔄 새로운 프로젝트 설계하기 (초기화)", on_click=go_to_step, args=(0,))
